@@ -78,7 +78,7 @@ function mapTransferOrderRow(to, locs) {
   };
 }
 
-function appendDedupById(prev, next) {
+export function appendDedupById(prev, next) {
   const seen = new Set(prev.map((r) => r.id));
   return [...prev, ...next.filter((r) => !seen.has(r.id))];
 }
@@ -101,7 +101,19 @@ export function WarehouseProvider({ children }) {
   const [loadError, setLoadError] = useState(null);
   const [poHasMore, setPoHasMore] = useState(false);
   const [toHasMore, setToHasMore] = useState(false);
+  const [stockTruncated, setStockTruncated] = useState(false);
   const loadingMoreRef = useRef(false);
+  // How many history rows are currently loaded per list, so a background refetch
+  // (realtime / post-mutation) re-fetches the SAME span instead of collapsing
+  // the user's scrolled-in pages back to one page (M1).
+  const poLoadedRef = useRef(HISTORY_PAGE_SIZE);
+  const toLoadedRef = useRef(HISTORY_PAGE_SIZE);
+  // Serializes fetchAll(): at most one request in flight plus one queued
+  // follow-up, so overlapping triggers (initial load / realtime / post-mutation
+  // refresh) never stampede, and every caller still gets data at least as fresh
+  // as its call time (M2).
+  const fetchInFlightRef = useRef(null);
+  const fetchQueuedRef = useRef(null);
 
   function mainLocationId(locs) {
     return (locs || locations).find((l) => l.type === 'warehouse_main')?.id;
@@ -111,7 +123,10 @@ export function WarehouseProvider({ children }) {
     return findPharmacyLocation(locs || locations)?.id;
   }
 
-  const fetchAll = useCallback(async () => {
+  const fetchAllImpl = useCallback(async () => {
+    const poLimit = Math.max(HISTORY_PAGE_SIZE, poLoadedRef.current);
+    const toLimit = Math.max(HISTORY_PAGE_SIZE, toLoadedRef.current);
+
     const { data: locs, error: locErr } = await supabase.from('locations').select('*').order('created_at');
     if (locErr) throw locErr;
     setLocations(locs || []);
@@ -134,8 +149,8 @@ export function WarehouseProvider({ children }) {
       stockSubLocs.length > 0
         ? supabase.from('stock_batches').select('*, items(name, category, hsn_code, units_per_pack)').in('location_id', stockSubLocs.map((s) => s.id)).order('updated_at', { ascending: false }).limit(STOCK_FETCH_CAP)
         : Promise.resolve({ data: [] }),
-      supabase.from('purchase_orders').select('*, purchase_order_items(*)').order('created_at', { ascending: false }).range(0, HISTORY_PAGE_SIZE - 1),
-      supabase.from('transfer_orders').select('*, transfer_order_items(*)').order('created_at', { ascending: false }).range(0, HISTORY_PAGE_SIZE - 1),
+      supabase.from('purchase_orders').select('*, purchase_order_items(*)').order('created_at', { ascending: false }).range(0, poLimit - 1),
+      supabase.from('transfer_orders').select('*, transfer_order_items(*)').order('created_at', { ascending: false }).range(0, toLimit - 1),
       main
         ? supabase.from('alerts_config').select('*').eq('location_id', main.id).maybeSingle()
         : Promise.resolve({ data: null }),
@@ -146,11 +161,14 @@ export function WarehouseProvider({ children }) {
     if (poRes.error) throw poRes.error;
     if (toRes.error) throw toRes.error;
 
-    setMainStock((mainRes.data || []).map(rowToMainItem));
+    const mainRows = mainRes.data || [];
+    const subRows = subRes.data || [];
+    setMainStock(mainRows.map(rowToMainItem));
+    setStockTruncated(mainRows.length >= STOCK_FETCH_CAP || subRows.length >= STOCK_FETCH_CAP);
 
     const grouped = {};
     for (const s of stockSubLocs) grouped[s.id] = [];
-    for (const row of subRes.data || []) {
+    for (const row of subRows) {
       grouped[row.location_id] = grouped[row.location_id] || [];
       grouped[row.location_id].push({
         id: row.id,
@@ -175,15 +193,35 @@ export function WarehouseProvider({ children }) {
     const toRows = (toRes.data || []).map((to) => mapTransferOrderRow(to, locs));
     setPurchaseOrders(poRows);
     setTransferOrders(toRows);
-    setPoHasMore(poRows.length === HISTORY_PAGE_SIZE);
-    setToHasMore(toRows.length === HISTORY_PAGE_SIZE);
+    poLoadedRef.current = poRows.length;
+    toLoadedRef.current = toRows.length;
+    setPoHasMore(poRows.length === poLimit);
+    setToHasMore(toRows.length === toLimit);
 
     if (alertsRes.data) {
       setAlertsConfig({ lowStockThreshold: alertsRes.data.low_stock_threshold, expiryAlertDays: alertsRes.data.expiry_alert_days });
     }
 
     return locs || [];
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Public entry point (M2). If a fetch is running, callers get a single shared
+  // follow-up that starts after it completes — so a post-mutation refresh always
+  // reflects the mutation, without piling up requests.
+  const fetchAll = useCallback(() => {
+    const start = () => {
+      const p = fetchAllImpl().finally(() => { fetchInFlightRef.current = null; });
+      fetchInFlightRef.current = p;
+      return p;
+    };
+    if (!fetchInFlightRef.current) return start();
+    if (!fetchQueuedRef.current) {
+      fetchQueuedRef.current = fetchInFlightRef.current
+        .catch(() => {})
+        .then(() => { fetchQueuedRef.current = null; return start(); });
+    }
+    return fetchQueuedRef.current;
+  }, [fetchAllImpl]);
 
   // Append the next page of purchase-order / transfer-order history. Safe to
   // call repeatedly; a re-entrancy guard stops overlapping fetches and rows are
@@ -200,7 +238,11 @@ export function WarehouseProvider({ children }) {
         .range(from, from + HISTORY_PAGE_SIZE - 1);
       if (error) throw error;
       const rows = (data || []).map(mapPurchaseOrderRow);
-      setPurchaseOrders((prev) => appendDedupById(prev, rows));
+      setPurchaseOrders((prev) => {
+        const merged = appendDedupById(prev, rows);
+        poLoadedRef.current = merged.length;
+        return merged;
+      });
       setPoHasMore(rows.length === HISTORY_PAGE_SIZE);
     } catch (e) {
       console.error('loadMorePurchaseOrders failed:', e);
@@ -221,7 +263,11 @@ export function WarehouseProvider({ children }) {
         .range(from, from + HISTORY_PAGE_SIZE - 1);
       if (error) throw error;
       const rows = (data || []).map((to) => mapTransferOrderRow(to, locations));
-      setTransferOrders((prev) => appendDedupById(prev, rows));
+      setTransferOrders((prev) => {
+        const merged = appendDedupById(prev, rows);
+        toLoadedRef.current = merged.length;
+        return merged;
+      });
       setToHasMore(rows.length === HISTORY_PAGE_SIZE);
     } catch (e) {
       console.error('loadMoreTransferOrders failed:', e);
@@ -287,12 +333,25 @@ export function WarehouseProvider({ children }) {
     };
   }, [fetchAll]);
 
-  // Compare-and-set a single batch's qty: the UPDATE only lands if the row's
-  // qty on the server still equals what we last read (expectedQty). If it
-  // doesn't, another client (desktop Warehouse / Pharmacy POS) changed it
-  // first — we refetch and raise a clear conflict error instead of blindly
-  // overwriting their change. A true DB transaction is drafted separately in
-  // supabase/migrations/_DRAFT_*_atomic_stock_ops.sql.
+  // ---- Concurrent-write safety for stock_batches.qty ----
+  // The desktop Warehouse app and the Pharmacy POS write to the same rows.
+  // PostgREST has no "qty = qty + n", so every quantity mutation here is a
+  // read + compare-and-set: the UPDATE carries `.eq('qty', <value we read>)`
+  // and only lands if nobody changed the row in between. A true multi-row
+  // transaction is in supabase/migrations/_DRAFT_*_atomic_stock_ops.sql.
+
+  async function readBatchQty(id) {
+    const { data, error } = await supabase
+      .from('stock_batches')
+      .select('qty')
+      .eq('id', id)
+      .maybeSingle();
+    if (error) throw error;
+    return data ? { found: true, qty: data.qty ?? 0 } : { found: false, qty: 0 };
+  }
+
+  // Absolute set, guarded on the value the caller last saw. On a lost CAS we
+  // distinguish the three real causes so the message isn't misleading (M6).
   async function setBatchQtyGuarded(id, expectedQty, newQty) {
     const { data, error } = await supabase
       .from('stock_batches')
@@ -301,10 +360,41 @@ export function WarehouseProvider({ children }) {
       .eq('qty', expectedQty ?? 0)
       .select('id');
     if (error) throw error;
-    if (!data || data.length === 0) {
-      await fetchAll().catch(() => {});
-      throw new Error('This item’s stock just changed on the server. Latest values loaded — please try again.');
+    if (data && data.length > 0) return;
+
+    // CAS matched nothing — find out why before telling the user.
+    const cur = await readBatchQty(id).catch(() => null);
+    await fetchAll().catch(() => {});
+    if (cur && !cur.found) {
+      throw new Error('This item was removed on the server. The list has been refreshed.');
     }
+    if (cur && cur.qty === (expectedQty ?? 0)) {
+      throw new Error('That change was rejected (insufficient permissions for this location).');
+    }
+    throw new Error('This item’s stock just changed on the server. Latest values loaded — please try again.');
+  }
+
+  // Relative change (+/-), CAS with bounded retries — for the "+= received qty"
+  // and "+= transferred qty" merges where the correct outcome is simply
+  // last-known + delta, whoever else also wrote. Clamped at 0.
+  async function bumpBatchQty(id, delta, { retries = 5 } = {}) {
+    let last = await readBatchQty(id);
+    if (!last.found) throw new Error('Target stock batch no longer exists.');
+    for (let attempt = 0; attempt < retries; attempt += 1) {
+      const next = Math.max(0, last.qty + delta);
+      const { data, error } = await supabase
+        .from('stock_batches')
+        .update({ qty: next })
+        .eq('id', id)
+        .eq('qty', last.qty)
+        .select('id');
+      if (error) throw error;
+      if (data && data.length > 0) return next;
+      last = await readBatchQty(id);
+      if (!last.found) throw new Error('Target stock batch was removed mid-update.');
+    }
+    await fetchAll().catch(() => {});
+    throw new Error('Could not apply the stock change after several attempts (the item is being updated elsewhere). Please retry.');
   }
 
   async function adjustStock(id, delta) {
@@ -335,12 +425,35 @@ export function WarehouseProvider({ children }) {
   async function receivePurchaseOrder(orderId) {
     const order = purchaseOrders.find((o) => o.id === orderId);
     if (!order) return;
+    // Idempotency guard: never add a PO's stock twice (double-tap, stale view).
+    if (order.status !== 'Pending') {
+      throw new Error(`This purchase order is already "${order.status}".`);
+    }
     const mainId = mainLocationId();
+
+    // Claim the PO first with a Pending -> Received compare-and-set. Only the
+    // client that wins this flip goes on to add stock, so a concurrent receive
+    // (or a double-tap) can never double-count. If adding stock then fails, the
+    // PO is Received with the additions incomplete — recoverable by editing the
+    // affected batches; the DRAFT atomic RPC removes this window entirely.
+    const receivedAt = new Date().toISOString();
+    const { data: claim, error: claimErr } = await supabase
+      .from('purchase_orders')
+      .update({ status: 'Received', received_at: receivedAt })
+      .eq('id', orderId)
+      .eq('status', 'Pending')
+      .select('id');
+    if (claimErr) throw claimErr;
+    if (!claim || claim.length === 0) {
+      await fetchAll().catch(() => {});
+      throw new Error('This purchase order was just received elsewhere. The list has been refreshed.');
+    }
 
     for (const line of order.items) {
       const trimmed = (line.name || '').trim();
       let itemId;
-      const { data: existingItem } = await supabase.from('items').select('id').ilike('name', trimmed).limit(1).maybeSingle();
+      const { data: existingItem, error: itemReadErr } = await supabase.from('items').select('id').ilike('name', trimmed).limit(1).maybeSingle();
+      if (itemReadErr) throw itemReadErr;
       if (existingItem) {
         itemId = existingItem.id;
       } else {
@@ -351,29 +464,40 @@ export function WarehouseProvider({ children }) {
         itemId = created.id;
       }
 
-      const { data: existingBatch } = await batchEq(
+      const { data: existingBatch, error: batchReadErr } = await batchEq(
         supabase.from('stock_batches').select('id, qty').eq('item_id', itemId).eq('location_id', mainId),
         line.batch
       ).maybeSingle();
+      if (batchReadErr) throw batchReadErr;
       if (existingBatch) {
-        await supabase.from('stock_batches').update({ qty: (existingBatch.qty || 0) + (line.qty || 0) }).eq('id', existingBatch.id);
+        await bumpBatchQty(existingBatch.id, line.qty || 0);
       } else {
-        await supabase.from('stock_batches').insert({
+        const { error: insErr } = await supabase.from('stock_batches').insert({
           item_id: itemId, location_id: mainId, batch_no: line.batch || null, expiry_date: line.expiry || null,
           net_rate: line.netRate, mrp: line.mrp, gst: line.gst, stockist: order.supplier || null, qty: line.qty || 0,
         });
+        if (insErr) throw insErr;
       }
     }
 
-    const receivedAt = new Date().toISOString();
-    await supabase.from('purchase_orders').update({ status: 'Received', received_at: receivedAt }).eq('id', orderId);
     setPurchaseOrders((prev) => prev.map((o) => (o.id === orderId ? { ...o, status: 'Received', receivedAt } : o)));
     await fetchAll();
   }
 
   async function cancelPurchaseOrder(orderId) {
-    const { error } = await supabase.from('purchase_orders').update({ status: 'Cancelled' }).eq('id', orderId);
+    // Only a still-Pending PO can be cancelled — never a Received one (that would
+    // orphan the stock its receipt already added).
+    const { data, error } = await supabase
+      .from('purchase_orders')
+      .update({ status: 'Cancelled' })
+      .eq('id', orderId)
+      .eq('status', 'Pending')
+      .select('id');
     if (error) throw error;
+    if (!data || data.length === 0) {
+      await fetchAll().catch(() => {});
+      throw new Error('This purchase order can no longer be cancelled (it was already received or cancelled).');
+    }
     setPurchaseOrders((prev) => prev.map((o) => (o.id === orderId ? { ...o, status: 'Cancelled' } : o)));
   }
 
@@ -401,10 +525,11 @@ export function WarehouseProvider({ children }) {
     await fetchAll();
   }
 
-  async function updateMainItem(id, patch) {
-    const current = mainStock.find((i) => i.id === id);
-    if (!current) return;
-
+  // Shared item + batch patch writer for main / pharmacy edit forms.
+  // Metadata columns (name, rates, batch no, expiry) are last-write-wins — fine,
+  // that matches the desktop app. The absolute quantity is applied through the
+  // compare-and-set guard so an edit can't stomp a concurrent sale / adjustment.
+  async function applyItemAndBatchPatch(batchId, patch, current) {
     const itemPatch = {};
     if (patch.category !== undefined) itemPatch.category = patch.category;
     if (patch.hsnCode !== undefined) itemPatch.hsn_code = patch.hsnCode;
@@ -421,13 +546,21 @@ export function WarehouseProvider({ children }) {
     if (patch.netRate !== undefined) batchPatch.net_rate = patch.netRate;
     if (patch.mrp !== undefined) batchPatch.mrp = patch.mrp;
     if (patch.gst !== undefined) batchPatch.gst = patch.gst;
-    if (patch.stock !== undefined) batchPatch.qty = patch.stock;
     if (patch.stockist !== undefined) batchPatch.stockist = patch.stockist;
     if (Object.keys(batchPatch).length > 0) {
-      const { error } = await supabase.from('stock_batches').update(batchPatch).eq('id', id);
+      const { error } = await supabase.from('stock_batches').update(batchPatch).eq('id', batchId);
       if (error) throw error;
     }
 
+    if (patch.stock !== undefined && patch.stock !== (current.stock || 0)) {
+      await setBatchQtyGuarded(batchId, current.stock || 0, patch.stock);
+    }
+  }
+
+  async function updateMainItem(id, patch) {
+    const current = mainStock.find((i) => i.id === id);
+    if (!current) return;
+    await applyItemAndBatchPatch(id, patch, current);
     await fetchAll();
   }
 
@@ -461,30 +594,7 @@ export function WarehouseProvider({ children }) {
     const locId = requirePharmacyLocationId();
     const current = (subStocks[locId] || []).find((i) => i.id === id);
     if (!current) return;
-
-    const itemPatch = {};
-    if (patch.category !== undefined) itemPatch.category = patch.category;
-    if (patch.hsnCode !== undefined) itemPatch.hsn_code = patch.hsnCode;
-    if (patch.unitsPerPack !== undefined) itemPatch.units_per_pack = patch.unitsPerPack;
-    if (patch.name !== undefined && patch.name !== current.name) itemPatch.name = patch.name;
-    if (Object.keys(itemPatch).length > 0 && current.itemId) {
-      const { error } = await supabase.from('items').update(itemPatch).eq('id', current.itemId);
-      if (error) throw error;
-    }
-
-    const batchPatch = {};
-    if (patch.batch !== undefined) batchPatch.batch_no = patch.batch || null;
-    if (patch.expiry !== undefined) batchPatch.expiry_date = patch.expiry || null;
-    if (patch.netRate !== undefined) batchPatch.net_rate = patch.netRate;
-    if (patch.mrp !== undefined) batchPatch.mrp = patch.mrp;
-    if (patch.gst !== undefined) batchPatch.gst = patch.gst;
-    if (patch.stock !== undefined) batchPatch.qty = patch.stock;
-    if (patch.stockist !== undefined) batchPatch.stockist = patch.stockist;
-    if (Object.keys(batchPatch).length > 0) {
-      const { error } = await supabase.from('stock_batches').update(batchPatch).eq('id', id);
-      if (error) throw error;
-    }
-
+    await applyItemAndBatchPatch(id, patch, current);
     await fetchAll();
   }
 
@@ -559,42 +669,49 @@ export function WarehouseProvider({ children }) {
     for (const line of order.items) {
       const sourceRow = mainStock.find((i) => i.id === line.mainStockId);
       if (!sourceRow) continue;
+      const qty = line.qty || 0;
 
-      await supabase.from('transfer_order_items').insert({
+      const { error: lineErr } = await supabase.from('transfer_order_items').insert({
         transfer_order_id: toRow.id, item_id: sourceRow.itemId, name: line.name,
-        batch_no: line.batch || null, expiry_date: line.expiry || null, mrp: line.mrp, net_rate: line.netRate, qty: line.qty,
+        batch_no: line.batch || null, expiry_date: line.expiry || null, mrp: line.mrp, net_rate: line.netRate, qty,
       });
+      if (lineErr) throw lineErr;
 
       // Compare-and-set the source batch so a concurrent change to Main Stock
-      // isn't silently overwritten. On conflict the transfer is left partially
-      // applied (header + line rows exist) — the caller is told to refresh.
-      // The DRAFT atomic RPC removes this partial-write window entirely.
+      // isn't silently overwritten, and never let it go negative. On conflict the
+      // transfer is left partially applied (header + line rows exist) — the caller
+      // is told to refresh. The DRAFT atomic RPC removes this window entirely.
       const expectedSourceQty = sourceRow.stock || 0;
-      const newSourceQty = expectedSourceQty - (line.qty || 0);
+      if (expectedSourceQty < qty) {
+        await fetchAll().catch(() => {});
+        throw new Error(`"${line.name}" no longer has ${qty} in stock (only ${expectedSourceQty}). The transfer is partially applied — refresh and verify.`);
+      }
       const { data: srcUpd, error: srcErr } = await supabase
         .from('stock_batches')
-        .update({ qty: newSourceQty })
+        .update({ qty: Math.max(0, expectedSourceQty - qty) })
         .eq('id', line.mainStockId)
         .eq('qty', expectedSourceQty)
         .select('id');
       if (srcErr) throw srcErr;
       if (!srcUpd || srcUpd.length === 0) {
         await fetchAll().catch(() => {});
-        throw new Error(`"${line.name}" stock changed while transferring. The transfer may be partially applied — please refresh and verify.`);
+        throw new Error(`"${line.name}" stock changed while transferring. The transfer is partially applied — please refresh and verify.`);
       }
 
-      const { data: destRow } = await batchEq(
+      const { data: destRow, error: destReadErr } = await batchEq(
         supabase.from('stock_batches').select('id, qty').eq('item_id', sourceRow.itemId).eq('location_id', order.toLocationId),
         line.batch
       ).maybeSingle();
+      if (destReadErr) throw destReadErr;
       if (destRow) {
-        await supabase.from('stock_batches').update({ qty: (destRow.qty || 0) + (line.qty || 0) }).eq('id', destRow.id);
+        await bumpBatchQty(destRow.id, qty);
       } else {
-        await supabase.from('stock_batches').insert({
+        const { error: destInsErr } = await supabase.from('stock_batches').insert({
           item_id: sourceRow.itemId, location_id: order.toLocationId, batch_no: line.batch || null,
           expiry_date: line.expiry || null, mrp: line.mrp, net_rate: line.netRate, gst: sourceRow.gst,
-          stockist: sourceRow.stockist, qty: line.qty || 0,
+          stockist: sourceRow.stockist, qty,
         });
+        if (destInsErr) throw destInsErr;
       }
     }
 
@@ -628,8 +745,11 @@ export function WarehouseProvider({ children }) {
   // separate from mainStock — never read/written by main-stock screens or
   // actions. If no such location exists, pharmacyStock is simply empty rather
   // than crashing or falling through to another location.
-  const pharmacyLocation = findPharmacyLocation(locations);
-  const pharmacyStock = pharmacyLocation ? (subStocks[pharmacyLocation.id] || []) : [];
+  const pharmacyLocation = useMemo(() => findPharmacyLocation(locations), [locations]);
+  const pharmacyStock = useMemo(
+    () => (pharmacyLocation ? (subStocks[pharmacyLocation.id] || []) : []),
+    [pharmacyLocation, subStocks],
+  );
 
   function getPharmacyAlerts() {
     const now = new Date();
@@ -652,24 +772,58 @@ export function WarehouseProvider({ children }) {
     subStockLocations: locations.filter((l) => l.type === 'warehouse_sub').map((l) => ({ id: l.id, name: l.name, color: l.color })),
   }), [alertsConfig.lowStockThreshold, alertsConfig.expiryAlertDays, locations]);
 
-  const value = {
-    locations, mainStock, subStocks, purchaseOrders, transferOrders, settings,
-    pharmacyLocation, pharmacyStock, getPharmacyAlerts,
-    loading, refreshing, loadError, refresh,
-    poHasMore, toHasMore, loadMorePurchaseOrders, loadMoreTransferOrders,
-    adjustStock: withErrorAlert(adjustStock),
-    receivePurchaseOrder: withErrorAlert(receivePurchaseOrder),
-    cancelPurchaseOrder: withErrorAlert(cancelPurchaseOrder),
-    addMainItem: withErrorAlert(addMainItem),
-    updateMainItem: withErrorAlert(updateMainItem),
-    deleteMainItem: withErrorAlert(deleteMainItem),
-    addPharmacyItem: withErrorAlert(addPharmacyItem),
-    updatePharmacyItem: withErrorAlert(updatePharmacyItem),
-    deletePharmacyItem: withErrorAlert(deletePharmacyItem),
-    createPurchaseOrder: withErrorAlert(createPurchaseOrder),
-    createTransferOrder: withErrorAlert(createTransferOrder),
-    getAlerts, getTotalValue, getSubStockValue,
+  // ---- Stable public API (L1) ----
+  // The handler/selector functions above are re-created every render (they close
+  // over current state). Rather than useCallback-ing ~15 of them with hand-kept
+  // dep lists (stale-closure risk), we keep one ref that always points at this
+  // render's latest closures, and expose permanently-stable wrappers that
+  // delegate through it. `value` is then memoized on real state only, so
+  // consumers re-render on data changes — not on every provider render.
+  const apiRef = useRef(null);
+  apiRef.current = {
+    adjustStock, receivePurchaseOrder, cancelPurchaseOrder,
+    addMainItem, updateMainItem, deleteMainItem,
+    addPharmacyItem, updatePharmacyItem, deletePharmacyItem,
+    createPurchaseOrder, createTransferOrder,
+    getAlerts, getTotalValue, getSubStockValue, getPharmacyAlerts,
   };
+
+  const api = useMemo(() => {
+    const delegate = (name) => (...args) => apiRef.current[name](...args);
+    const guarded = (name) => withErrorAlert(delegate(name));
+    return {
+      adjustStock: guarded('adjustStock'),
+      receivePurchaseOrder: guarded('receivePurchaseOrder'),
+      cancelPurchaseOrder: guarded('cancelPurchaseOrder'),
+      addMainItem: guarded('addMainItem'),
+      updateMainItem: guarded('updateMainItem'),
+      deleteMainItem: guarded('deleteMainItem'),
+      addPharmacyItem: guarded('addPharmacyItem'),
+      updatePharmacyItem: guarded('updatePharmacyItem'),
+      deletePharmacyItem: guarded('deletePharmacyItem'),
+      createPurchaseOrder: guarded('createPurchaseOrder'),
+      createTransferOrder: guarded('createTransferOrder'),
+      getAlerts: delegate('getAlerts'),
+      getTotalValue: delegate('getTotalValue'),
+      getSubStockValue: delegate('getSubStockValue'),
+      getPharmacyAlerts: delegate('getPharmacyAlerts'),
+    };
+  }, []);
+
+  const value = useMemo(() => ({
+    locations, mainStock, subStocks, purchaseOrders, transferOrders, settings,
+    pharmacyLocation, pharmacyStock,
+    loading, refreshing, loadError, stockTruncated,
+    poHasMore, toHasMore,
+    refresh, loadMorePurchaseOrders, loadMoreTransferOrders,
+    ...api,
+  }), [
+    locations, mainStock, subStocks, purchaseOrders, transferOrders, settings,
+    pharmacyLocation, pharmacyStock,
+    loading, refreshing, loadError, stockTruncated,
+    poHasMore, toHasMore,
+    refresh, loadMorePurchaseOrders, loadMoreTransferOrders, api,
+  ]);
 
   return <WarehouseContext.Provider value={value}>{children}</WarehouseContext.Provider>;
 }

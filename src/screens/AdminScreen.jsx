@@ -29,6 +29,7 @@ function summarize(obj) {
 
 export default function AdminScreen() {
   const { session } = useAuth();
+  const accessToken = session?.access_token;
   const [backups, setBackups] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -44,12 +45,12 @@ export default function AdminScreen() {
   const load = useCallback(async () => {
     try {
       setError(null);
-      const list = await listDriveBackups(session.access_token);
+      const list = await listDriveBackups(accessToken);
       setBackups(list);
     } catch (e) {
       setError(e.message || String(e));
     }
-  }, [session]);
+  }, [accessToken]);
 
   useEffect(() => {
     setLoading(true);
@@ -68,7 +69,7 @@ export default function AdminScreen() {
     setShowRaw(false);
     setContentLoading(true);
     try {
-      const data = await getDriveBackupContent(session.access_token, item.id);
+      const data = await getDriveBackupContent(accessToken, item.id);
       setContent(data);
     } catch (e) {
       setContent({ error: e.message || String(e) });
@@ -170,6 +171,12 @@ export default function AdminScreen() {
                   <Text style={styles.rawText}>{JSON.stringify(content.json, null, 2)}</Text>
                 </Card>
               </>
+            )}
+
+            {!contentLoading && content && !content.error && !content.encrypted && !content.json && (
+              <Text style={styles.errorText}>
+                This backup could not be read — the server returned no usable content.
+              </Text>
             )}
           </ScrollView>
           <AnimatedPressable style={styles.closeBtn} onPress={() => setViewing(null)}>

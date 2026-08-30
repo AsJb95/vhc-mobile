@@ -1,4 +1,3 @@
-/* global jest, process */
 // Native-module shims + env so pure-logic modules that transitively import the
 // Supabase client can be unit-tested under Node.
 process.env.EXPO_PUBLIC_SUPABASE_URL =

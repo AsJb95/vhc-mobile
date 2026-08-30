@@ -42,7 +42,7 @@ export default function CreatePOModal({ visible, onClose }) {
     try {
       await createPurchaseOrder({
         supplier: supplier.trim(), poDate, expectedDelivery, notes,
-        items: items.map((r) => ({
+        items: items.map(({ _uid, ...r }) => ({
           ...r, qty: parseFloat(r.qty) || 0, netRate: parseFloat(r.netRate) || 0, mrp: parseFloat(r.mrp) || 0,
           gst: parseFloat(r.gst) || 12, unitsPerPack: parseInt(r.unitsPerPack, 10) || 10,
         })),

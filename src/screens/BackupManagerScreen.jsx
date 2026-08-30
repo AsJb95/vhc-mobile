@@ -1,9 +1,9 @@
 import { useEffect, useState, useCallback } from 'react';
-import { View, Text, FlatList, StyleSheet, RefreshControl, Modal, ActivityIndicator, TextInput, Alert } from 'react-native';
+import { View, Text, FlatList, StyleSheet, RefreshControl, Modal, ActivityIndicator, Alert } from 'react-native';
 import { useAuth } from '../context/AuthContext';
 import { useWarehouse } from '../context/WarehouseContext';
 import { Card, Badge, EmptyState, Screen, AnimatedPressable } from '../components/UI';
-import { listDriveBackups, restorePharmacyBackup, previewWarehouseRestore } from '../lib/adminApi';
+import { listDriveBackups, restorePharmacyBackup } from '../lib/adminApi';
 import { formatBytes, formatDateTime, colors } from '../lib/format';
 
 const APP_META = {
@@ -12,32 +12,28 @@ const APP_META = {
   other: { label: 'Other', color: colors.muted },
 };
 
-// Encrypted (password-protected) Warehouse backup restore is not implemented
-// end to end yet — the edge function currently ignores the supplied password.
-// Keep the entry point hidden until decryption lands so no one relies on a
-// no-op "restore". Flip to true once previewWarehouseRestore actually decrypts.
-const ENCRYPTED_RESTORE_ENABLED = false;
-
+// Only the unencrypted Pharmacy restore is wired end to end. Encrypted
+// (password-protected) Warehouse backups are restored from the desktop app —
+// decrypting them here is not built yet, so those rows just say so.
 export default function BackupManagerScreen({ visible, onClose }) {
   const { session } = useAuth();
+  const accessToken = session?.access_token;
   const { refresh: refreshWarehouseData } = useWarehouse();
   const [backups, setBackups] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
   const [restoringId, setRestoringId] = useState(null);
-  const [passwordPromptFor, setPasswordPromptFor] = useState(null);
-  const [password, setPassword] = useState('');
 
   const load = useCallback(async () => {
     try {
       setError(null);
-      const list = await listDriveBackups(session.access_token);
+      const list = await listDriveBackups(accessToken);
       setBackups(list);
     } catch (e) {
       setError(e.message || String(e));
     }
-  }, [session]);
+  }, [accessToken]);
 
   useEffect(() => {
     if (!visible) return;
@@ -65,31 +61,15 @@ export default function BackupManagerScreen({ visible, onClose }) {
   async function doRestorePharmacy(backup) {
     setRestoringId(backup.id);
     try {
-      const result = await restorePharmacyBackup(session.access_token, backup.id);
-      await refreshWarehouseData(); // auto-refresh so Pharmacy Stock shows the new data immediately
-      Alert.alert('Restored', `Pharmacy Stock now has ${result.imported} item(s) from this backup${result.skipped ? ` (${result.skipped} skipped — missing a name)` : ''}.`);
+      const result = await restorePharmacyBackup(accessToken, backup.id);
+      await refreshWarehouseData(); // so Pharmacy Stock shows the new data immediately
+      const imported = result?.imported ?? 0;
+      const skipped = result?.skipped ?? 0;
+      Alert.alert('Restored', `Pharmacy Stock now has ${imported} item(s) from this backup${skipped ? ` (${skipped} skipped — missing a name)` : ''}.`);
     } catch (e) {
       Alert.alert('Restore failed', e.message || String(e));
     } finally {
       setRestoringId(null);
-    }
-  }
-
-  async function doWarehouseRestore(backup) {
-    if (!password) {
-      Alert.alert('Password required', 'Enter the backup password to continue.');
-      return;
-    }
-    setRestoringId(backup.id);
-    try {
-      const result = await previewWarehouseRestore(session.access_token, backup.id, password);
-      Alert.alert('Warehouse backup', result.note || 'Decrypted successfully.');
-    } catch (e) {
-      Alert.alert('Restore failed', e.message || String(e));
-    } finally {
-      setRestoringId(null);
-      setPasswordPromptFor(null);
-      setPassword('');
     }
   }
 
@@ -98,7 +78,7 @@ export default function BackupManagerScreen({ visible, onClose }) {
       <Screen>
         <View style={styles.header}>
           <Text style={styles.title}>Backup Manager</Text>
-          <Text style={styles.subtitle}>Restore Warehouse or Pharmacy data from a Google Drive backup</Text>
+          <Text style={styles.subtitle}>Restore Pharmacy data from a Google Drive backup</Text>
         </View>
 
         {loading ? (
@@ -133,39 +113,10 @@ export default function BackupManagerScreen({ visible, onClose }) {
                     </AnimatedPressable>
                   )}
 
-                  {item.encrypted && !ENCRYPTED_RESTORE_ENABLED && (
+                  {item.encrypted && (
                     <Text style={styles.itemMeta}>
-                      🔒 Encrypted — restore from the desktop Warehouse app for now.
+                      🔒 Encrypted — restore this from the desktop Warehouse app.
                     </Text>
-                  )}
-
-                  {item.encrypted && ENCRYPTED_RESTORE_ENABLED && (
-                    <>
-                      {passwordPromptFor === item.id ? (
-                        <View style={{ marginTop: 10 }}>
-                          <TextInput
-                            style={styles.passwordInput}
-                            placeholder="Backup password"
-                            placeholderTextColor={colors.muted}
-                            secureTextEntry
-                            value={password}
-                            onChangeText={setPassword}
-                          />
-                          <View style={styles.row}>
-                            <AnimatedPressable style={[styles.restoreBtn, { flex: 1 }]} onPress={() => doWarehouseRestore(item)} disabled={isRestoring}>
-                              <Text style={styles.restoreBtnText}>{isRestoring ? 'Checking...' : 'Confirm'}</Text>
-                            </AnimatedPressable>
-                            <AnimatedPressable style={[styles.cancelSmallBtn, { flex: 1 }]} onPress={() => { setPasswordPromptFor(null); setPassword(''); }}>
-                              <Text style={styles.cancelSmallBtnText}>Cancel</Text>
-                            </AnimatedPressable>
-                          </View>
-                        </View>
-                      ) : (
-                        <AnimatedPressable style={styles.restoreBtnMuted} onPress={() => setPasswordPromptFor(item.id)}>
-                          <Text style={styles.restoreBtnMutedText}>Restore Warehouse Backup (🔒 needs password)</Text>
-                        </AnimatedPressable>
-                      )}
-                    </>
                   )}
                 </Card>
               );
@@ -191,17 +142,8 @@ const styles = StyleSheet.create({
   itemRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 6 },
   itemName: { color: colors.text, fontWeight: '600', fontSize: 14, flex: 1 },
   itemMeta: { color: colors.muted, fontSize: 12 },
-  row: { flexDirection: 'row', gap: 8, marginTop: 8 },
   restoreBtn: { marginTop: 10, backgroundColor: colors.accent, borderRadius: 10, paddingVertical: 10, alignItems: 'center' },
   restoreBtnText: { color: '#fff', fontWeight: '700', fontSize: 13 },
-  restoreBtnMuted: { marginTop: 10, backgroundColor: colors.panelBorder, borderRadius: 10, paddingVertical: 10, alignItems: 'center' },
-  restoreBtnMutedText: { color: colors.text, fontWeight: '600', fontSize: 13 },
-  cancelSmallBtn: { marginTop: 10, backgroundColor: colors.panel, borderWidth: 1, borderColor: colors.panelBorder, borderRadius: 10, paddingVertical: 10, alignItems: 'center' },
-  cancelSmallBtnText: { color: colors.muted, fontWeight: '600', fontSize: 13 },
-  passwordInput: {
-    backgroundColor: colors.panel, borderWidth: 1, borderColor: colors.panelBorder, borderRadius: 10,
-    color: colors.text, paddingHorizontal: 12, paddingVertical: 10,
-  },
   closeBtn: { padding: 16, alignItems: 'center', borderTopWidth: 1, borderTopColor: colors.panelBorder },
   closeBtnText: { color: colors.accent, fontWeight: '600' },
 });

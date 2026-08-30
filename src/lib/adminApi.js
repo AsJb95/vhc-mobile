@@ -83,6 +83,7 @@ export function restorePharmacyBackup(accessToken, fileId) {
   return postFn('restorePharmacy', { fileId }, accessToken);
 }
 
-export function previewWarehouseRestore(accessToken, fileId, password) {
-  return postFn('previewWarehouseRestore', { fileId, password }, accessToken);
-}
+// NOTE: the edge function also exposes a 'previewWarehouseRestore' action for
+// password-protected Warehouse backups, but decrypting them in-app isn't built
+// yet (the function currently ignores the password). Add a wrapper here when
+// that lands — see supabase/functions/drive-backups/index.ts.

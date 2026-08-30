@@ -1,5 +1,6 @@
 import { NavigationContainer, DarkTheme } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { MotiView } from 'moti';
 import DashboardScreen from '../screens/DashboardScreen';
@@ -38,6 +39,7 @@ const navTheme = {
 
 export default function RootNavigator() {
   const { role } = useAuth();
+  const insets = useSafeAreaInsets();
 
   return (
     <NavigationContainer theme={navTheme}>
@@ -46,7 +48,13 @@ export default function RootNavigator() {
           headerShown: false,
           tabBarActiveTintColor: colors.accent,
           tabBarInactiveTintColor: colors.muted,
-          tabBarStyle: { backgroundColor: colors.panel, borderTopColor: colors.panelBorder, height: 64, paddingBottom: 10, paddingTop: 8 },
+          tabBarStyle: {
+            backgroundColor: colors.panel,
+            borderTopColor: colors.panelBorder,
+            height: 56 + insets.bottom,
+            paddingBottom: 8 + insets.bottom,
+            paddingTop: 8,
+          },
           tabBarLabelStyle: { fontSize: 10 },
           tabBarIcon: ({ color, size, focused }) => (
             <MotiView

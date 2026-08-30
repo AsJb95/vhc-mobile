@@ -1,5 +1,6 @@
-import { Component } from 'react';
-import { View, Text, ScrollView, StyleSheet } from 'react-native';
+import { Component, Fragment } from 'react';
+import { Text, ScrollView, StyleSheet } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { AnimatedPressable } from './UI';
 import { colors } from '../lib/format';
 
@@ -10,7 +11,10 @@ import { colors } from '../lib/format';
 export default class ErrorBoundary extends Component {
   constructor(props) {
     super(props);
-    this.state = { error: null };
+    // `resetKey` is bumped on retry and used as the child subtree's `key`, so
+    // "Try again" fully remounts everything below (fresh provider/component
+    // state) instead of re-rendering the same broken tree.
+    this.state = { error: null, resetKey: 0 };
   }
 
   static getDerivedStateFromError(error) {
@@ -23,15 +27,17 @@ export default class ErrorBoundary extends Component {
   }
 
   handleReset = () => {
-    this.setState({ error: null });
+    this.setState((s) => ({ error: null, resetKey: s.resetKey + 1 }));
   };
 
   render() {
-    const { error } = this.state;
-    if (!error) return this.props.children;
+    const { error, resetKey } = this.state;
+    if (!error) {
+      return <Fragment key={resetKey}>{this.props.children}</Fragment>;
+    }
 
     return (
-      <View style={styles.container}>
+      <SafeAreaView style={styles.container}>
         <ScrollView contentContainerStyle={styles.content}>
           <Text style={styles.emoji}>⚠️</Text>
           <Text style={styles.title}>Something went wrong</Text>
@@ -42,7 +48,7 @@ export default class ErrorBoundary extends Component {
             <Text style={styles.buttonText}>Try again</Text>
           </AnimatedPressable>
         </ScrollView>
-      </View>
+      </SafeAreaView>
     );
   }
 }

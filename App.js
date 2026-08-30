@@ -10,9 +10,11 @@ import RootNavigator from './src/navigation/RootNavigator';
 import { colors } from './src/lib/format';
 
 function Gate() {
-  const { session, loading } = useAuth();
+  const { session, loading, roleResolved } = useAuth();
 
-  if (loading) {
+  // Wait for the session AND (when signed in) the role, so role-gated UI
+  // renders in its final shape from the first frame.
+  if (loading || (session && !roleResolved)) {
     return (
       <View style={styles.loading}>
         <ActivityIndicator color={colors.accent} size="large" />

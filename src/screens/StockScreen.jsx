@@ -16,7 +16,7 @@ const TABS = [
 ];
 
 export default function StockScreen() {
-  const { mainStock, settings, adjustStock, loading, refreshing, refresh } = useWarehouse();
+  const { mainStock, settings, adjustStock, loading, refreshing, refresh, stockTruncated } = useWarehouse();
   const { canWriteWarehouse } = useAuth();
   const [search, setSearch] = useState('');
   const [tab, setTab] = useState('all');
@@ -51,6 +51,11 @@ export default function StockScreen() {
       <View style={styles.header}>
         <Text style={styles.title}>Main Stock</Text>
         <Text style={styles.subtitle}>{mainStock.length} products</Text>
+        {stockTruncated ? (
+          <Text style={styles.truncatedNote}>
+            Showing the {mainStock.length} most-recently-updated items — some older items are not loaded. Use search on the desktop app for the full catalogue.
+          </Text>
+        ) : null}
         <TextInput
           style={styles.search}
           placeholder="Search medicine, batch, stockist..."
@@ -125,6 +130,7 @@ const styles = StyleSheet.create({
   header: { padding: 16, paddingBottom: 8 },
   title: { color: colors.text, fontSize: 26, fontWeight: '800', letterSpacing: -0.4 },
   subtitle: { color: colors.muted, fontSize: 12, marginBottom: 12 },
+  truncatedNote: { color: colors.warning, fontSize: 11, marginBottom: 10 },
   search: {
     backgroundColor: colors.panel, borderWidth: 1, borderColor: colors.panelBorder, borderRadius: 10,
     color: colors.text, paddingHorizontal: 14, paddingVertical: 10, marginBottom: 10,

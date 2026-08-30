@@ -16,7 +16,7 @@ const TABS = [
 ];
 
 export default function PharmacyStockScreen() {
-  const { pharmacyStock, pharmacyLocation, settings, adjustStock, loading, refreshing, refresh } = useWarehouse();
+  const { pharmacyStock, pharmacyLocation, settings, adjustStock, loading, refreshing, refresh, stockTruncated } = useWarehouse();
   const { canWritePharmacy } = useAuth();
   const [search, setSearch] = useState('');
   const [tab, setTab] = useState('all');
@@ -53,6 +53,11 @@ export default function PharmacyStockScreen() {
         <Text style={styles.subtitle}>
           {pharmacyLocation ? `${pharmacyStock.length} products at ${pharmacyLocation.name}` : 'No Pharmacy location configured yet'}
         </Text>
+        {stockTruncated ? (
+          <Text style={styles.truncatedNote}>
+            Showing the most-recently-updated items — some older items are not loaded.
+          </Text>
+        ) : null}
         <TextInput
           style={styles.search}
           placeholder="Search medicine, batch, stockist..."
@@ -76,7 +81,7 @@ export default function PharmacyStockScreen() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={colors.accent} />}
         ListEmptyComponent={
           <EmptyState
-            text={pharmacyLocation ? 'No pharmacy stock yet — transfer items here from Main Stock via Orders → Transfers' : 'No Pharmacy location configured yet'}
+            text={pharmacyLocation ? 'No pharmacy stock yet. Add items with the + button, or transfer them in from the desktop Warehouse app.' : 'No Pharmacy location configured yet'}
             icon="💊"
           />
         }
@@ -136,6 +141,7 @@ const styles = StyleSheet.create({
   header: { padding: 16, paddingBottom: 8 },
   title: { color: colors.text, fontSize: 26, fontWeight: '800', letterSpacing: -0.4 },
   subtitle: { color: colors.muted, fontSize: 12, marginBottom: 12 },
+  truncatedNote: { color: colors.warning, fontSize: 11, marginBottom: 10 },
   search: {
     backgroundColor: colors.panel, borderWidth: 1, borderColor: colors.panelBorder, borderRadius: 10,
     color: colors.text, paddingHorizontal: 14, paddingVertical: 10, marginBottom: 10,

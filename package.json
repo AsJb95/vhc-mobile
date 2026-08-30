@@ -47,7 +47,6 @@
   },
   "private": true,
   "devDependencies": {
-    "@testing-library/react-native": "^14.0.1",
     "babel-preset-expo": "^57.0.7",
     "eslint": "^9.39.5",
     "eslint-config-expo": "^57.0.2",

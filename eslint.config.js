@@ -45,9 +45,16 @@ module.exports = [
     },
   },
   {
-    files: ['**/__tests__/**', '**/*.test.{js,jsx}', 'jest.setup.js'],
+    files: ['**/__tests__/**', '**/*.test.{js,jsx}'],
     languageOptions: {
       globals: { jest: 'readonly', describe: 'readonly', it: 'readonly', expect: 'readonly', beforeEach: 'readonly', afterEach: 'readonly' },
+    },
+  },
+  {
+    files: ['jest.setup.js', '*.config.js', 'eslint.config.js'],
+    languageOptions: {
+      sourceType: 'commonjs',
+      globals: { module: 'writable', require: 'readonly', process: 'readonly', __dirname: 'readonly', jest: 'readonly' },
     },
   },
 ];

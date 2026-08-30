@@ -50,3 +50,11 @@ EAS project Environment Variables and delete the `env` blocks.
 The DB is shared with the desktop Warehouse app and Pharmacy POS. Migrations are
 applied manually via the Supabase SQL editor — see `../supabase/README.md`.
 `supabase/migrations/_DRAFT_*` files are **not applied**; see their headers.
+
+The publishable anon key grants unauthenticated read on `items` and
+`stock_batches` (including `net_rate` / `stockist`) — an intentional grant for
+this single-operator setup (`../supabase/migrations/20260820000200_public_readonly_items_stock.sql`).
+Revisit that migration before distributing the app more widely.
+
+The `drive-backups` edge function must be redeployed after any change:
+`npx supabase functions deploy drive-backups`.
