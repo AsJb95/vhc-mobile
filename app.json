@@ -1,0 +1,36 @@
+{
+  "expo": {
+    "name": "VHC Warehouse",
+    "slug": "vhc-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#0a0f1e",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.vhc.warehouse.mobile"
+    },
+    "android": {
+      "package": "com.vhc.warehouse.mobile",
+      "adaptiveIcon": {
+        "backgroundColor": "#0a0f1e",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      }
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "3d37b26f-9bdb-4539-923b-31287a62e99d"
+      }
+    },
+    "owner": "arun.s",
+    "plugins": [
+      "expo-font"
+    ]
+  }
+}
