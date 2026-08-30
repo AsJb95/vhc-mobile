@@ -29,4 +29,17 @@ describe('findPharmacyLocation', () => {
     expect(findPharmacyLocation(undefined)).toBeNull();
     expect(findPharmacyLocation([])).toBeNull();
   });
+
+  // Mirrors the real production `locations` table (verified 2026-08-30): a
+  // warehouse_sub literally named "VHC Pharmacy" sits next to the real
+  // pharmacy_counter "VHC Pharmacy Counter". The old name-substring resolver
+  // matched the wrong one; this must pick the counter.
+  it('picks the pharmacy_counter over a same-named warehouse_sub (live shape)', () => {
+    const live = [
+      { id: 'main', name: 'VHC Warehouse (Main Stock)', type: 'warehouse_main' },
+      { id: 'counter', name: 'VHC Pharmacy Counter', type: 'pharmacy_counter' },
+      { id: 'sub', name: 'VHC Pharmacy', type: 'warehouse_sub' },
+    ];
+    expect(findPharmacyLocation(live).id).toBe('counter');
+  });
 });
