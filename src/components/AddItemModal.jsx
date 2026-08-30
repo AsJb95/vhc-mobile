@@ -41,14 +41,19 @@ export default function AddItemModal({ visible, item, onClose, target = 'main' }
       Alert.alert('Missing name', 'Enter a medicine/product name.');
       return;
     }
+    const stockNum = parseInt(form.stock, 10) || 0;
+    if (stockNum < 0) {
+      Alert.alert('Invalid stock', 'Stock quantity cannot be negative.');
+      return;
+    }
     setSaving(true);
     const payload = {
       ...form,
-      netRate: parseFloat(form.netRate) || 0,
-      mrp: parseFloat(form.mrp) || 0,
-      gst: parseFloat(form.gst) || 12,
-      stock: parseInt(form.stock, 10) || 0,
-      unitsPerPack: parseInt(form.unitsPerPack, 10) || 10,
+      netRate: Math.max(0, parseFloat(form.netRate) || 0),
+      mrp: Math.max(0, parseFloat(form.mrp) || 0),
+      gst: Math.max(0, parseFloat(form.gst) || 12),
+      stock: stockNum,
+      unitsPerPack: Math.max(1, parseInt(form.unitsPerPack, 10) || 10),
     };
     try {
       // Update-vs-add branches on the record we were opened with (`item`),

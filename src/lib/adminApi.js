@@ -1,3 +1,5 @@
+import 'react-native-url-polyfill/auto'; // `new URL()` below; idempotent if already installed
+
 const FUNCTIONS_URL = `${process.env.EXPO_PUBLIC_SUPABASE_URL}/functions/v1/drive-backups`;
 const ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
 

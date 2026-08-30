@@ -321,8 +321,10 @@ export function WarehouseProvider({ children }) {
       }, 1200);
     };
 
+    // Unique channel name per provider instance so a fast sign-out/sign-in
+    // (unmount + remount) can't collide with a not-yet-torn-down channel.
     const channel = supabase
-      .channel('warehouse-stock')
+      .channel(`warehouse-stock-${Date.now()}-${Math.random().toString(36).slice(2)}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'stock_batches' }, scheduleRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'items' }, scheduleRefresh)
       .subscribe();
@@ -451,6 +453,7 @@ export function WarehouseProvider({ children }) {
 
     for (const line of order.items) {
       const trimmed = (line.name || '').trim();
+      if (!trimmed) continue; // skip a blank line rather than create a nameless item
       let itemId;
       const { data: existingItem, error: itemReadErr } = await supabase.from('items').select('id').ilike('name', trimmed).limit(1).maybeSingle();
       if (itemReadErr) throw itemReadErr;
@@ -464,17 +467,18 @@ export function WarehouseProvider({ children }) {
         itemId = created.id;
       }
 
+      const addQty = Math.max(0, line.qty || 0);
       const { data: existingBatch, error: batchReadErr } = await batchEq(
         supabase.from('stock_batches').select('id, qty').eq('item_id', itemId).eq('location_id', mainId),
         line.batch
       ).maybeSingle();
       if (batchReadErr) throw batchReadErr;
       if (existingBatch) {
-        await bumpBatchQty(existingBatch.id, line.qty || 0);
+        await bumpBatchQty(existingBatch.id, addQty);
       } else {
         const { error: insErr } = await supabase.from('stock_batches').insert({
           item_id: itemId, location_id: mainId, batch_no: line.batch || null, expiry_date: line.expiry || null,
-          net_rate: line.netRate, mrp: line.mrp, gst: line.gst, stockist: order.supplier || null, qty: line.qty || 0,
+          net_rate: line.netRate, mrp: line.mrp, gst: line.gst, stockist: order.supplier || null, qty: addQty,
         });
         if (insErr) throw insErr;
       }
@@ -503,7 +507,9 @@ export function WarehouseProvider({ children }) {
 
   async function resolveItemId({ name, category, hsnCode, unitsPerPack }) {
     const trimmed = (name || '').trim();
-    const { data: existing } = await supabase.from('items').select('id').ilike('name', trimmed).limit(1).maybeSingle();
+    if (!trimmed) throw new Error('An item name is required.');
+    const { data: existing, error: readErr } = await supabase.from('items').select('id').ilike('name', trimmed).limit(1).maybeSingle();
+    if (readErr) throw readErr;
     if (existing) return existing.id;
     const { data: created, error } = await supabase
       .from('items')
@@ -519,7 +525,8 @@ export function WarehouseProvider({ children }) {
     const { error } = await supabase.from('stock_batches').insert({
       item_id: itemId, location_id: mainLocationId(),
       batch_no: item.batch || null, expiry_date: item.expiry || null,
-      mrp: item.mrp, net_rate: item.netRate, gst: item.gst, stockist: item.stockist || null, qty: item.stock || 0,
+      mrp: item.mrp, net_rate: item.netRate, gst: item.gst, stockist: item.stockist || null,
+      qty: Math.max(0, item.stock || 0),
     });
     if (error) throw error;
     await fetchAll();
@@ -552,8 +559,11 @@ export function WarehouseProvider({ children }) {
       if (error) throw error;
     }
 
-    if (patch.stock !== undefined && patch.stock !== (current.stock || 0)) {
-      await setBatchQtyGuarded(batchId, current.stock || 0, patch.stock);
+    if (patch.stock !== undefined) {
+      const nextStock = Math.max(0, patch.stock);
+      if (nextStock !== (current.stock || 0)) {
+        await setBatchQtyGuarded(batchId, current.stock || 0, nextStock);
+      }
     }
   }
 
@@ -584,7 +594,8 @@ export function WarehouseProvider({ children }) {
     const { error } = await supabase.from('stock_batches').insert({
       item_id: itemId, location_id: locId,
       batch_no: item.batch || null, expiry_date: item.expiry || null,
-      mrp: item.mrp, net_rate: item.netRate, gst: item.gst, stockist: item.stockist || null, qty: item.stock || 0,
+      mrp: item.mrp, net_rate: item.netRate, gst: item.gst, stockist: item.stockist || null,
+      qty: Math.max(0, item.stock || 0),
     });
     if (error) throw error;
     await fetchAll();
@@ -669,7 +680,8 @@ export function WarehouseProvider({ children }) {
     for (const line of order.items) {
       const sourceRow = mainStock.find((i) => i.id === line.mainStockId);
       if (!sourceRow) continue;
-      const qty = line.qty || 0;
+      const qty = Math.max(0, line.qty || 0);
+      if (qty === 0) continue;
 
       const { error: lineErr } = await supabase.from('transfer_order_items').insert({
         transfer_order_id: toRow.id, item_id: sourceRow.itemId, name: line.name,

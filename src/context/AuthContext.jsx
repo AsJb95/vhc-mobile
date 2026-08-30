@@ -6,11 +6,13 @@ const AuthContext = createContext(null);
 export function AuthProvider({ children }) {
   const [session, setSession] = useState(undefined); // undefined = loading, null = signed out
   const [profile, setProfile] = useState(null);
-  // false until the profile for the current session has been resolved once, so
-  // the app can wait for the role before rendering role-gated UI (no flash of
-  // "no Admin tab" / read-only for an admin right after sign-in).
+  // false until the profile for the current user has been resolved once, so the
+  // app can wait for the role before rendering role-gated UI (no flash of "no
+  // Admin tab" / read-only for an admin right after sign-in). NOT reset on a
+  // token refresh — only when the user actually changes.
   const [profileResolved, setProfileResolved] = useState(false);
   const profileReqRef = useRef(0);
+  const loadedForUserRef = useRef(undefined);
 
   const loadProfile = useCallback(async (userId) => {
     const reqId = profileReqRef.current + 1;
@@ -18,14 +20,16 @@ export function AuthProvider({ children }) {
     const isStale = () => profileReqRef.current !== reqId;
 
     if (!userId) {
-      if (!isStale()) {
-        setProfile(null);
-        setProfileResolved(true);
-      }
+      loadedForUserRef.current = null;
+      setProfile(null);
+      setProfileResolved(true);
       return;
     }
 
-    setProfileResolved(false);
+    // Only show the "resolving role" state on a genuine user change, not on a
+    // token refresh for the same user.
+    if (loadedForUserRef.current !== userId) setProfileResolved(false);
+
     // maybeSingle: a missing profile row is a valid "no role yet" state, not an
     // error. Retry once on a transient network error so a flaky connection at
     // sign-in doesn't strand the user with role=null until an app restart.
@@ -34,6 +38,7 @@ export function AuthProvider({ children }) {
         .from('profiles').select('*').eq('id', userId).maybeSingle();
       if (isStale()) return; // a newer session/profile load superseded this one
       if (!error) {
+        loadedForUserRef.current = userId;
         setProfile(data || null);
         setProfileResolved(true);
         return;
@@ -50,14 +55,23 @@ export function AuthProvider({ children }) {
   }, []);
 
   useEffect(() => {
+    let mountedUserId; // track the current user so we skip no-op reloads
+
     supabase.auth.getSession().then(({ data }) => {
+      const uid = data.session?.user?.id ?? null;
+      mountedUserId = uid;
       setSession(data.session);
-      loadProfile(data.session?.user?.id);
+      loadProfile(uid);
     });
 
     const { data: sub } = supabase.auth.onAuthStateChange((_event, newSession) => {
+      const uid = newSession?.user?.id ?? null;
       setSession(newSession);
-      loadProfile(newSession?.user?.id);
+      // Skip reloading the profile on TOKEN_REFRESHED / same-user events.
+      if (uid !== mountedUserId) {
+        mountedUserId = uid;
+        loadProfile(uid);
+      }
     });
 
     return () => sub.subscription.unsubscribe();
