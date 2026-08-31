@@ -76,6 +76,41 @@ describe('periodRange + filterSalesByRange', () => {
   });
 });
 
+describe('periodRange: anchored to business timezone (Asia/Kolkata), not device local time', () => {
+  const originalTZ = process.env.TZ;
+  afterEach(() => { process.env.TZ = originalTZ; });
+
+  it('uses Kolkata\'s calendar day even when it genuinely differs from the device\'s', () => {
+    // 2026-08-31T23:00:00Z is still Aug 31 evening in New York (UTC-4) but already
+    // Sept 1 pre-dawn in Kolkata (UTC+5:30) — a real divergence, not a coincidence.
+    process.env.TZ = 'America/New_York';
+    const now = new Date('2026-08-31T23:00:00.000Z');
+    const { from, to, label } = periodRange('today', { now });
+    expect(label).toBe('Today');
+    const kolkataDay = (d) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(d);
+    expect(kolkataDay(from)).toBe('2026-09-01');
+    expect(kolkataDay(to)).toBe('2026-09-01');
+  });
+
+  it('produces the identical "today" range regardless of which timezone the device is set to', () => {
+    const now = new Date('2026-08-31T23:00:00.000Z');
+    const zones = ['America/New_York', 'Asia/Kolkata', 'Pacific/Auckland', 'UTC'];
+    const results = zones.map((tz) => { process.env.TZ = tz; return periodRange('today', { now }); });
+    for (const r of results) {
+      expect(r.from.getTime()).toBe(results[0].from.getTime());
+      expect(r.to.getTime()).toBe(results[0].to.getTime());
+    }
+  });
+
+  it('customday with a bare "YYYY-MM-DD" is anchored to Kolkata, not UTC-then-device-local', () => {
+    process.env.TZ = 'America/Los_Angeles'; // UTC-7/8 — the old bug's worst case
+    const { from, to } = periodRange('customday', { day: '2026-08-15' });
+    const kolkataDay = (d) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(d);
+    expect(kolkataDay(from)).toBe('2026-08-15');
+    expect(kolkataDay(to)).toBe('2026-08-15');
+  });
+});
+
 describe('summarizeSales', () => {
   const cost = buildCostLookup([{ itemId: 'a', batch: 'B1', netRate: 40, unitsPerPack: 10 }]); // ₹4/unit
   const sales = [

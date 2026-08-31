@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ScrollView, View, Text, StyleSheet, RefreshControl, ActivityIndicator } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { useWarehouse } from '../context/WarehouseContext';
 import { usePharmacy } from '../context/PharmacyContext';
 import { Card, Screen, ScreenLoading } from '../components/UI';
@@ -22,6 +23,24 @@ export default function SalesReportsScreen() {
   const [customTo, setCustomTo] = useState('');
   const [rangeResult, setRangeResult] = useState(null); // { sales } | { error } for custom / older
   const [rangeLoading, setRangeLoading] = useState(false);
+
+  // Reset to Today every time this screen gains focus — not just on first mount. This
+  // screen lives inside a Tab Navigator's stack, which (by design, to preserve scroll
+  // position etc.) keeps screens mounted when you switch tabs rather than destroying them,
+  // so useState('today') above only ever applies once, the very first time the screen is
+  // ever opened. Without this, whatever period was selected on a previous visit silently
+  // became the new "default" the moment the user switched tabs and came back — the exact
+  // behavior this fix removes. Custom date/range fields are cleared too, so a stale custom
+  // selection can't reappear as soon as the picker is reopened.
+  useFocusEffect(
+    useCallback(() => {
+      setPeriod('today');
+      setCustomDay('');
+      setCustomFrom('');
+      setCustomTo('');
+      setRangeResult(null);
+    }, []),
+  );
 
   const costLookup = useMemo(() => buildCostLookup(pharmacyStock), [pharmacyStock]);
 

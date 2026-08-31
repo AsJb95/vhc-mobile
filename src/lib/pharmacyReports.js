@@ -64,44 +64,77 @@ export const REPORT_PERIODS = [
   { key: 'customrange', label: 'Custom Range' },
 ];
 
-function startOfDay(d) { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; }
-function endOfDay(d) { const x = new Date(d); x.setHours(23, 59, 59, 999); return x; }
+// The pharmacy's single business timezone — same one the POS app and its Telegram bot
+// already use (see telegram-bot/lib/data.js's todayKey/dateKey). Fixed +05:30 offset is
+// always correct for this zone: India does not observe DST.
+const BUSINESS_TZ = 'Asia/Kolkata';
+const BUSINESS_TZ_OFFSET = '+05:30';
 
-// Returns { from, to, label } as Date objects in the device's local time
-// (the pharmacy operates in a single timezone; the POS/bot use Asia/Kolkata).
+// "YYYY-MM-DD" for the given instant, as a wall-clock date in the business timezone —
+// deliberately NOT the device's own timezone, which can differ (a phone carried across
+// timezones, or simply set incorrectly) and would otherwise make "today" ambiguous.
+function businessDateKey(date) {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: BUSINESS_TZ }).format(date);
+}
+
+// Start/end of the given business-timezone calendar day ("YYYY-MM-DD"), as real Date
+// instants — correct regardless of the device's own local timezone, since the offset is
+// explicit rather than inferred from the runtime environment.
+function businessStartOfDay(dayKey) { return new Date(`${dayKey}T00:00:00.000${BUSINESS_TZ_OFFSET}`); }
+function businessEndOfDay(dayKey) { return new Date(`${dayKey}T23:59:59.999${BUSINESS_TZ_OFFSET}`); }
+
+// Shifts a "YYYY-MM-DD" key by `delta` calendar days. Pure Y/M/D arithmetic done via
+// Date.UTC (never touches the device's local timezone), so this can't drift a day at
+// month/year boundaries the way local-time date math sometimes does.
+function shiftDateKey(dayKey, delta) {
+  const [y, m, d] = dayKey.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + delta);
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'UTC' }).format(dt);
+}
+
+// Returns { from, to, label } as Date instants bounding the requested period in the
+// pharmacy's business timezone (Asia/Kolkata) — not the device's local timezone. Matches
+// the same "today" the POS app and Telegram bot would report for the same instant.
 export function periodRange(key, opts = {}) {
   const now = opts.now ? new Date(opts.now) : new Date();
+  const todayKey = businessDateKey(now);
   switch (key) {
     case 'today':
-      return { from: startOfDay(now), to: endOfDay(now), label: 'Today' };
+      return { from: businessStartOfDay(todayKey), to: businessEndOfDay(todayKey), label: 'Today' };
     case 'yesterday': {
-      const y = new Date(now); y.setDate(y.getDate() - 1);
-      return { from: startOfDay(y), to: endOfDay(y), label: 'Yesterday' };
+      const y = shiftDateKey(todayKey, -1);
+      return { from: businessStartOfDay(y), to: businessEndOfDay(y), label: 'Yesterday' };
     }
     case 'last7': {
-      const f = new Date(now); f.setDate(f.getDate() - 6);
-      return { from: startOfDay(f), to: endOfDay(now), label: 'Last 7 Days' };
+      const f = shiftDateKey(todayKey, -6);
+      return { from: businessStartOfDay(f), to: businessEndOfDay(todayKey), label: 'Last 7 Days' };
     }
     case 'thismonth': {
-      const f = new Date(now.getFullYear(), now.getMonth(), 1);
-      return { from: startOfDay(f), to: endOfDay(now), label: 'This Month' };
+      const f = `${todayKey.slice(0, 7)}-01`;
+      return { from: businessStartOfDay(f), to: businessEndOfDay(todayKey), label: 'This Month' };
     }
     case 'lastmonth': {
-      const f = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-      const t = new Date(now.getFullYear(), now.getMonth(), 0);
-      return { from: startOfDay(f), to: endOfDay(t), label: 'Last Month' };
+      const [y, m] = todayKey.split('-').map(Number);
+      let py = y, pm = m - 1;
+      if (pm < 1) { pm = 12; py -= 1; }
+      const pmStr = String(pm).padStart(2, '0');
+      const lastDay = new Date(Date.UTC(py, pm, 0)).getUTCDate();
+      const f = `${py}-${pmStr}-01`;
+      const t = `${py}-${pmStr}-${String(lastDay).padStart(2, '0')}`;
+      return { from: businessStartOfDay(f), to: businessEndOfDay(t), label: 'Last Month' };
     }
     case 'customday': {
-      const d = opts.day ? new Date(opts.day) : now;
-      return { from: startOfDay(d), to: endOfDay(d), label: 'Custom Date' };
+      const d = opts.day || todayKey;
+      return { from: businessStartOfDay(d), to: businessEndOfDay(d), label: 'Custom Date' };
     }
     case 'customrange': {
-      const f = opts.from ? new Date(opts.from) : startOfDay(now);
-      const t = opts.to ? new Date(opts.to) : endOfDay(now);
-      return { from: startOfDay(f), to: endOfDay(t), label: 'Custom Range' };
+      const f = opts.from || todayKey;
+      const t = opts.to || todayKey;
+      return { from: businessStartOfDay(f), to: businessEndOfDay(t), label: 'Custom Range' };
     }
     default:
-      return { from: startOfDay(now), to: endOfDay(now), label: 'Today' };
+      return { from: businessStartOfDay(todayKey), to: businessEndOfDay(todayKey), label: 'Today' };
   }
 }
 
