@@ -5,7 +5,16 @@ import { FormField } from './FormField';
 import { useWarehouse } from '../context/WarehouseContext';
 import { colors } from '../lib/format';
 
-const BLANK = { name: '', batch: '', expiry: '', netRate: '', mrp: '', gst: '12', stock: '', unitsPerPack: '10', category: '', hsnCode: '', stockist: '' };
+const BLANK = { name: '', batch: '', expiry: '', netRate: '', mrp: '', gst: '12', stock: '', unitsPerPack: '10', category: '', hsnCode: '', stockist: '', correctionReason: '' };
+
+// A quantity change is "significant" (asks for confirmation) if it crosses zero
+// or moves by 5+ units — small nudges from the +/- buttons stay frictionless.
+function isSignificantStockChange(oldQty, newQty) {
+  const o = Number(oldQty) || 0;
+  const n = Number(newQty) || 0;
+  if (o === n) return false;
+  return Math.abs(n - o) >= 5 || o === 0 || n === 0;
+}
 
 // target: 'main' (default) writes to Main Stock; 'pharmacy' writes to the
 // Pharmacy's own stock location. The two are never mixed — each target uses
@@ -15,7 +24,7 @@ export default function AddItemModal({ visible, item, onClose, target = 'main' }
     addMainItem, updateMainItem, deleteMainItem,
     addPharmacyItem, updatePharmacyItem, deletePharmacyItem,
   } = useWarehouse();
-  const [form, setForm] = useState(() => (item ? { ...item } : { ...BLANK }));
+  const [form, setForm] = useState(() => (item ? { ...BLANK, ...item, correctionReason: '' } : { ...BLANK }));
   const [saving, setSaving] = useState(false);
 
   // Re-sync the form to the selected record every time the modal opens (or
@@ -24,7 +33,7 @@ export default function AddItemModal({ visible, item, onClose, target = 'main' }
   // showing whatever it last had instead of the newly-selected item.
   useEffect(() => {
     if (visible) {
-      setForm(item ? { ...item } : { ...BLANK });
+      setForm(item ? { ...BLANK, ...item, correctionReason: '' } : { ...BLANK });
     }
   }, [visible, item]);
 
@@ -46,7 +55,6 @@ export default function AddItemModal({ visible, item, onClose, target = 'main' }
       Alert.alert('Invalid stock', 'Stock quantity cannot be negative.');
       return;
     }
-    setSaving(true);
     const payload = {
       ...form,
       netRate: Math.max(0, parseFloat(form.netRate) || 0),
@@ -54,22 +62,43 @@ export default function AddItemModal({ visible, item, onClose, target = 'main' }
       gst: Math.max(0, parseFloat(form.gst) || 12),
       stock: stockNum,
       unitsPerPack: Math.max(1, parseInt(form.unitsPerPack, 10) || 10),
+      correctionReason: (form.correctionReason || '').trim(),
     };
-    try {
-      // Update-vs-add branches on the record we were opened with (`item`),
-      // and updateFn always targets that same record's id — it can never
-      // create a duplicate or drift onto a different row.
-      if (item) {
-        await updateFn(item.id, payload);
-      } else {
-        await addFn(payload);
+
+    const doSave = async () => {
+      setSaving(true);
+      try {
+        // Update-vs-add branches on the record we were opened with (`item`),
+        // and updateFn always targets that same record's id — it can never
+        // create a duplicate or drift onto a different row.
+        if (item) {
+          await updateFn(item.id, payload);
+        } else {
+          await addFn(payload);
+        }
+        onClose();
+      } catch {
+        // error already surfaced via Alert in context
+      } finally {
+        setSaving(false);
       }
-      onClose();
-    } catch {
-      // error already surfaced via Alert in context
-    } finally {
-      setSaving(false);
+    };
+
+    // Confirm a meaningful stock correction on an existing item (#10).
+    if (item && isSignificantStockChange(item.stock, stockNum)) {
+      Alert.alert(
+        'Confirm stock correction',
+        `"${item.name}"\n\nStock ${item.stock ?? 0} → ${stockNum} units` +
+          (payload.correctionReason ? `\nReason: ${payload.correctionReason}` : '') +
+          '\n\nThis writes directly to the shared warehouse stock. The change is guarded against a concurrent update and recorded in the stock movement history.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Apply correction', style: 'destructive', onPress: doSave },
+        ],
+      );
+      return;
     }
+    await doSave();
   }
 
   function confirmDelete() {
@@ -106,6 +135,15 @@ export default function AddItemModal({ visible, item, onClose, target = 'main' }
             <FormField containerStyle={styles.half} label="Category" value={form.category} onChangeText={(v) => patch('category', v)} />
             <FormField containerStyle={styles.half} label="HSN Code" value={form.hsnCode} onChangeText={(v) => patch('hsnCode', v)} />
           </View>
+
+          {item && (
+            <FormField
+              label="Correction reason (optional)"
+              placeholder="e.g. physical count, damaged, data entry fix"
+              value={form.correctionReason}
+              onChangeText={(v) => patch('correctionReason', v)}
+            />
+          )}
 
           {item && (
             <AnimatedPressable style={styles.deleteBtn} onPress={confirmDelete}>
