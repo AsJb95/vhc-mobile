@@ -4,6 +4,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { AuthProvider, useAuth } from './src/context/AuthContext';
 import { WarehouseProvider } from './src/context/WarehouseContext';
+import { PharmacyProvider } from './src/context/PharmacyContext';
 import ErrorBoundary from './src/components/ErrorBoundary';
 import LoginScreen from './src/screens/LoginScreen';
 import RootNavigator from './src/navigation/RootNavigator';
@@ -27,7 +28,9 @@ function Gate() {
 
   return (
     <WarehouseProvider>
-      <RootNavigator />
+      <PharmacyProvider>
+        <RootNavigator />
+      </PharmacyProvider>
     </WarehouseProvider>
   );
 }
