@@ -19,6 +19,7 @@ function rowToMainItem(row) {
   return {
     id: row.id,
     itemId: row.item_id,
+    locationId: row.location_id,
     name: row.items?.name || '',
     batch: row.batch_no || '',
     expiry: row.expiry_date || '',
@@ -102,6 +103,7 @@ export function WarehouseProvider({ children }) {
   const [poHasMore, setPoHasMore] = useState(false);
   const [toHasMore, setToHasMore] = useState(false);
   const [stockTruncated, setStockTruncated] = useState(false);
+  const [lastLoadedAt, setLastLoadedAt] = useState(null);
   const loadingMoreRef = useRef(false);
   // How many history rows are currently loaded per list, so a background refetch
   // (realtime / post-mutation) re-fetches the SAME span instead of collapsing
@@ -173,6 +175,7 @@ export function WarehouseProvider({ children }) {
       grouped[row.location_id].push({
         id: row.id,
         itemId: row.item_id,
+        locationId: row.location_id,
         mainStockId: row.item_id,
         name: row.items?.name || '',
         batch: row.batch_no || '',
@@ -202,6 +205,7 @@ export function WarehouseProvider({ children }) {
       setAlertsConfig({ lowStockThreshold: alertsRes.data.low_stock_threshold, expiryAlertDays: alertsRes.data.expiry_alert_days });
     }
 
+    setLastLoadedAt(new Date());
     return locs || [];
   }, []);
 
@@ -342,6 +346,29 @@ export function WarehouseProvider({ children }) {
   // and only lands if nobody changed the row in between. A true multi-row
   // transaction is in supabase/migrations/_DRAFT_*_atomic_stock_ops.sql.
 
+  // Best-effort append to the stock_movements ledger for MANUAL corrections made
+  // from mobile (edit-form quantity change, +/- adjust). The table already
+  // exists with an EDIT/ADJUST type and an insert policy for warehouse/pharmacy
+  // writers; the Pharmacy POS writes EDIT rows the same way. Never fails the
+  // underlying edit — a missing ledger row must not block a stock correction.
+  async function logStockMovement({ itemId, locationId, batchNo, type, opening, closing, reason }) {
+    if (!itemId || opening == null || closing == null) return;
+    try {
+      await supabase.from('stock_movements').insert({
+        item_id: itemId,
+        location_id: locationId || null,
+        batch_no: batchNo || null,
+        type,
+        qty: closing - opening,
+        opening,
+        closing,
+        reason: reason || 'Mobile stock correction',
+      });
+    } catch (e) {
+      console.warn('stock_movements ledger write skipped:', e?.message || e);
+    }
+  }
+
   async function readBatchQty(id) {
     const { data, error } = await supabase
       .from('stock_batches')
@@ -406,6 +433,7 @@ export function WarehouseProvider({ children }) {
       const newQty = Math.max(0, expected + delta);
       await setBatchQtyGuarded(id, expected, newQty);
       setMainStock((prev) => prev.map((i) => (i.id === id ? { ...i, stock: newQty } : i)));
+      logStockMovement({ itemId: current.itemId, locationId: current.locationId, batchNo: current.batch, type: 'ADJUST', opening: expected, closing: newQty, reason: 'Mobile ± adjust' });
       return;
     }
 
@@ -420,6 +448,7 @@ export function WarehouseProvider({ children }) {
         ...prev,
         [locId]: prev[locId].map((i) => (i.id === id ? { ...i, stock: newQty } : i)),
       }));
+      logStockMovement({ itemId: row.itemId, locationId: row.locationId || locId, batchNo: row.batch, type: 'ADJUST', opening: expected, closing: newQty, reason: 'Mobile ± adjust' });
       return;
     }
   }
@@ -560,9 +589,15 @@ export function WarehouseProvider({ children }) {
     }
 
     if (patch.stock !== undefined) {
+      const opening = current.stock || 0;
       const nextStock = Math.max(0, patch.stock);
-      if (nextStock !== (current.stock || 0)) {
-        await setBatchQtyGuarded(batchId, current.stock || 0, nextStock);
+      if (nextStock !== opening) {
+        await setBatchQtyGuarded(batchId, opening, nextStock);
+        logStockMovement({
+          itemId: current.itemId, locationId: current.locationId, batchNo: current.batch,
+          type: 'EDIT', opening, closing: nextStock,
+          reason: patch.correctionReason || 'Mobile stock correction',
+        });
       }
     }
   }
@@ -825,14 +860,14 @@ export function WarehouseProvider({ children }) {
   const value = useMemo(() => ({
     locations, mainStock, subStocks, purchaseOrders, transferOrders, settings,
     pharmacyLocation, pharmacyStock,
-    loading, refreshing, loadError, stockTruncated,
+    loading, refreshing, loadError, stockTruncated, lastLoadedAt,
     poHasMore, toHasMore,
     refresh, loadMorePurchaseOrders, loadMoreTransferOrders,
     ...api,
   }), [
     locations, mainStock, subStocks, purchaseOrders, transferOrders, settings,
     pharmacyLocation, pharmacyStock,
-    loading, refreshing, loadError, stockTruncated,
+    loading, refreshing, loadError, stockTruncated, lastLoadedAt,
     poHasMore, toHasMore,
     refresh, loadMorePurchaseOrders, loadMoreTransferOrders, api,
   ]);
