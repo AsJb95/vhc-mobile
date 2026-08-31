@@ -2,73 +2,92 @@ import { useMemo, useState } from 'react';
 import { View, Text, FlatList, StyleSheet, RefreshControl } from 'react-native';
 import { useWarehouse } from '../context/WarehouseContext';
 import { Card, Badge, EmptyState, ScreenLoading, StatCard, AnimatedPressable, Screen } from '../components/UI';
+import { ChipTabs } from '../components/Bits';
 import { formatCurrency, formatDate, daysUntil, colors } from '../lib/format';
+import { classifyPharmacyStock, PHARMACY_LOW_UNITS, PHARMACY_LOW_STRIPS } from '../lib/pharmacyStock';
 
-const TABS = [
+const FILTERS = [
   { key: 'all', label: 'All' },
   { key: 'expired', label: 'Expired' },
-  { key: 'out', label: 'Out of Stock' },
-  { key: 'low', label: 'Low Stock' },
+  { key: 'out', label: 'Out' },
+  { key: 'critical', label: 'Critical' },
+  { key: 'low', label: 'Low' },
   { key: 'expiring', label: 'Expiring' },
 ];
 
 const TYPE_META = {
   expired: { label: 'Expired', color: colors.danger },
   out: { label: 'Out of Stock', color: colors.danger },
+  critical: { label: 'Critical', color: colors.danger },
   low: { label: 'Low Stock', color: colors.warning },
   expiring: { label: 'Expiring Soon', color: colors.accent },
 };
 
 export default function AlertsScreen() {
-  const { getAlerts, mainStock, settings, loading, refreshing, refresh } = useWarehouse();
-  const [tab, setTab] = useState('all');
+  const { getAlerts, mainStock, pharmacyStock, settings, loading, refreshing, refresh } = useWarehouse();
+  const [domain, setDomain] = useState('warehouse');
+  const [filter, setFilter] = useState('all');
 
-  // getAlerts() rebuilds its arrays on every call, so memoize the whole result
-  // off the underlying stock snapshot — mainStock's identity only changes when
-  // the warehouse data is (re)loaded or mutated.
-  const alerts = useMemo(
+  // Warehouse alerts use the warehouse alerts_config threshold; pharmacy alerts
+  // use the pharmacy thresholds. These two are deliberately NOT the same number.
+  const whAlerts = useMemo(
     () => getAlerts(),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [mainStock, settings.lowStockThreshold, settings.expiryAlertDays],
   );
+  const phAlerts = useMemo(
+    () => classifyPharmacyStock(pharmacyStock, settings.expiryAlertDays),
+    [pharmacyStock, settings.expiryAlertDays],
+  );
+
+  const buckets = useMemo(() => (domain === 'warehouse'
+    ? { expired: whAlerts.expired, out: whAlerts.outOfStock, critical: [], low: whAlerts.lowStock, expiring: whAlerts.expiring }
+    : { expired: phAlerts.expired, out: phAlerts.outOfStock, critical: phAlerts.critical, low: phAlerts.low, expiring: phAlerts.expiring }),
+  [domain, whAlerts, phAlerts]);
 
   const rows = useMemo(() => {
-    const list = [
-      ...alerts.expired.map((i) => ({ type: 'expired', item: i })),
-      ...alerts.outOfStock.map((i) => ({ type: 'out', item: i })),
-      ...alerts.lowStock.map((i) => ({ type: 'low', item: i })),
-      ...alerts.expiring.map((i) => ({ type: 'expiring', item: i })),
-    ];
-    return tab === 'all' ? list : list.filter((r) => r.type === tab);
-  }, [tab, alerts]);
+    const order = ['expired', 'out', 'critical', 'low', 'expiring'];
+    const all = order.flatMap((t) => (buckets[t] || []).map((item) => ({ type: t, item })));
+    return filter === 'all' ? all : all.filter((r) => r.type === filter);
+  }, [buckets, filter]);
 
-  // NOTE: every hook above runs unconditionally — the loading short-circuit
-  // must stay below them to keep hook order stable across renders.
   if (loading) return <ScreenLoading />;
 
   return (
     <Screen>
       <View style={styles.header}>
         <Text style={styles.title}>Alerts</Text>
-        <Text style={styles.subtitle}>Low stock: &lt;{settings.lowStockThreshold} units · Expiry: {settings.expiryAlertDays} days</Text>
+        <View style={styles.segmented}>
+          <AnimatedPressable style={[styles.seg, domain === 'warehouse' && styles.segActive]} onPress={() => setDomain('warehouse')}>
+            <Text style={[styles.segText, domain === 'warehouse' && styles.segTextActive]}>Warehouse</Text>
+          </AnimatedPressable>
+          <AnimatedPressable style={[styles.seg, domain === 'pharmacy' && styles.segActive]} onPress={() => setDomain('pharmacy')}>
+            <Text style={[styles.segText, domain === 'pharmacy' && styles.segTextActive]}>Pharmacy</Text>
+          </AnimatedPressable>
+        </View>
+        <Text style={styles.subtitle}>
+          {domain === 'warehouse'
+            ? `Low stock: <${settings.lowStockThreshold} units · Expiry: ${settings.expiryAlertDays} days`
+            : `Low: ≤${PHARMACY_LOW_UNITS} units / ≤${PHARMACY_LOW_STRIPS} strips · Critical: half that · Expiry: ${settings.expiryAlertDays} days`}
+        </Text>
         <View style={styles.statGrid}>
-          <StatCard index={0} label="Expired" value={alerts.expired.length} color={colors.danger} />
-          <StatCard index={1} label="Out of Stock" value={alerts.outOfStock.length} color={colors.danger} />
-          <StatCard index={2} label="Low Stock" value={alerts.lowStock.length} color={colors.warning} />
-          <StatCard index={3} label="Expiring Soon" value={alerts.expiring.length} color={colors.accent} />
+          <StatCard index={0} label="Expired" value={buckets.expired.length} color={colors.danger} />
+          <StatCard index={1} label="Out of Stock" value={buckets.out.length} color={colors.danger} />
+          {domain === 'pharmacy'
+            ? <StatCard index={2} label="Critical" value={buckets.critical.length} color={colors.danger} />
+            : <StatCard index={2} label="Low Stock" value={buckets.low.length} color={colors.warning} />}
+          <StatCard index={3} label="Expiring Soon" value={buckets.expiring.length} color={colors.accent} />
         </View>
-        <View style={styles.tabRow}>
-          {TABS.map((t) => (
-            <AnimatedPressable key={t.key} style={[styles.tabBtn, tab === t.key && styles.tabBtnActive]} onPress={() => setTab(t.key)}>
-              <Text style={[styles.tabText, tab === t.key && styles.tabTextActive]}>{t.label}</Text>
-            </AnimatedPressable>
-          ))}
-        </View>
+        <ChipTabs
+          options={domain === 'warehouse' ? FILTERS.filter((f) => f.key !== 'critical') : FILTERS}
+          value={filter}
+          onChange={setFilter}
+        />
       </View>
 
       <FlatList
         data={rows}
-        keyExtractor={(row, idx) => `${row.type}-${row.item.id}-${idx}`}
+        keyExtractor={(row, idx) => `${domain}-${row.type}-${row.item.id}-${idx}`}
         contentContainerStyle={styles.list}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={colors.accent} />}
         ListEmptyComponent={<EmptyState text="No alerts in this category" icon="🔔" />}
@@ -98,16 +117,15 @@ export default function AlertsScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.bg },
   header: { padding: 16, paddingBottom: 8 },
-  title: { color: colors.text, fontSize: 26, fontWeight: '800', letterSpacing: -0.4 },
-  subtitle: { color: colors.muted, fontSize: 12, marginBottom: 12 },
+  title: { color: colors.text, fontSize: 26, fontWeight: '800', letterSpacing: -0.4, marginBottom: 10 },
+  segmented: { flexDirection: 'row', backgroundColor: colors.panel, borderRadius: 10, borderWidth: 1, borderColor: colors.panelBorder, padding: 4, marginBottom: 8 },
+  seg: { flex: 1, paddingVertical: 8, borderRadius: 8, alignItems: 'center' },
+  segActive: { backgroundColor: colors.accent },
+  segText: { color: colors.muted, fontSize: 13 },
+  segTextActive: { color: '#fff', fontWeight: '700' },
+  subtitle: { color: colors.muted, fontSize: 11, marginBottom: 12 },
   statGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
-  tabRow: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 4 },
-  tabBtn: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: colors.panel, borderWidth: 1, borderColor: colors.panelBorder, marginRight: 6, marginBottom: 6 },
-  tabBtnActive: { backgroundColor: colors.accent, borderColor: colors.accent },
-  tabText: { color: colors.muted, fontSize: 12 },
-  tabTextActive: { color: '#fff', fontWeight: '600' },
   list: { padding: 16, paddingTop: 8, paddingBottom: 32 },
   itemCard: { marginBottom: 10 },
   itemRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },

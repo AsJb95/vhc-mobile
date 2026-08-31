@@ -5,11 +5,16 @@ import { useWarehouse } from '../context/WarehouseContext';
 import { useAuth } from '../context/AuthContext';
 import { Card, Badge, EmptyState, ScreenLoading, AnimatedPressable, Screen } from '../components/UI';
 import AddItemModal from '../components/AddItemModal';
-import { formatCurrency, expiryStatus, stockStatus, colors } from '../lib/format';
+import { formatCurrency, expiryStatus, colors } from '../lib/format';
+import {
+  pharmacyStockStatus, isPharmacyLow, isPharmacyCritical, isPharmacyOutOfStock,
+  PHARMACY_LOW_UNITS, PHARMACY_LOW_STRIPS,
+} from '../lib/pharmacyStock';
 
 const TABS = [
   { key: 'all', label: 'All' },
   { key: 'low', label: 'Low' },
+  { key: 'critical', label: 'Critical' },
   { key: 'out', label: 'Out' },
   { key: 'expiring', label: 'Expiring' },
   { key: 'expired', label: 'Expired' },
@@ -30,9 +35,12 @@ export default function PharmacyStockScreen() {
     const now = new Date();
     const horizon = new Date(now.getTime() + (settings.expiryAlertDays || 90) * 24 * 60 * 60 * 1000);
     let list = pharmacyStock;
+    // Pharmacy thresholds (≤20 units / ≤2 strips), NOT the warehouse bulk
+    // threshold — see src/lib/pharmacyStock.js.
     switch (tab) {
-      case 'low': list = list.filter((i) => (i.stock || 0) > 0 && (i.stock || 0) < settings.lowStockThreshold); break;
-      case 'out': list = list.filter((i) => (i.stock || 0) === 0); break;
+      case 'low': list = list.filter(isPharmacyLow); break;
+      case 'critical': list = list.filter(isPharmacyCritical); break;
+      case 'out': list = list.filter(isPharmacyOutOfStock); break;
       case 'expiring': list = list.filter((i) => i.expiry && new Date(i.expiry) <= horizon && new Date(i.expiry) >= now); break;
       case 'expired': list = list.filter((i) => i.expiry && new Date(i.expiry) < now); break;
       default: break;
@@ -42,7 +50,7 @@ export default function PharmacyStockScreen() {
       list = list.filter((i) => (i.name || '').toLowerCase().includes(s) || (i.batch || '').toLowerCase().includes(s) || (i.stockist || '').toLowerCase().includes(s));
     }
     return list;
-  }, [pharmacyStock, tab, search, settings.lowStockThreshold, settings.expiryAlertDays]);
+  }, [pharmacyStock, tab, search, settings.expiryAlertDays]);
 
   if (loading) return <ScreenLoading />;
 
@@ -53,6 +61,7 @@ export default function PharmacyStockScreen() {
         <Text style={styles.subtitle}>
           {pharmacyLocation ? `${pharmacyStock.length} products at ${pharmacyLocation.name}` : 'No Pharmacy location configured yet'}
         </Text>
+        <Text style={styles.thresholdNote}>Low ≤ {PHARMACY_LOW_UNITS} units / ≤ {PHARMACY_LOW_STRIPS} strips · Critical at half that</Text>
         {stockTruncated ? (
           <Text style={styles.truncatedNote}>
             Showing the most-recently-updated items — some older items are not loaded.
@@ -87,7 +96,7 @@ export default function PharmacyStockScreen() {
         }
         renderItem={({ item, index }) => {
           const exp = expiryStatus(item.expiry);
-          const status = stockStatus(item.stock, settings.lowStockThreshold);
+          const status = pharmacyStockStatus(item, colors);
           return (
             <AnimatedPressable onPress={() => canWritePharmacy && openEdit(item)} disabled={!canWritePharmacy}>
               <Card index={index} style={styles.itemCard}>
@@ -140,7 +149,8 @@ export default function PharmacyStockScreen() {
 const styles = StyleSheet.create({
   header: { padding: 16, paddingBottom: 8 },
   title: { color: colors.text, fontSize: 26, fontWeight: '800', letterSpacing: -0.4 },
-  subtitle: { color: colors.muted, fontSize: 12, marginBottom: 12 },
+  subtitle: { color: colors.muted, fontSize: 12, marginBottom: 6 },
+  thresholdNote: { color: colors.muted, fontSize: 11, marginBottom: 10, fontStyle: 'italic' },
   truncatedNote: { color: colors.warning, fontSize: 11, marginBottom: 10 },
   search: {
     backgroundColor: colors.panel, borderWidth: 1, borderColor: colors.panelBorder, borderRadius: 10,
