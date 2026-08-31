@@ -1,15 +1,19 @@
 import { useMemo, useState } from 'react';
 import { ScrollView, View, Text, StyleSheet, RefreshControl } from 'react-native';
 import { useWarehouse } from '../context/WarehouseContext';
+import { useTheme } from '../context/ThemeContext';
+import { useThemedStyles } from '../theme/useThemedStyles';
 import { Card, Screen, ScreenLoading, EmptyState, AnimatedPressable, Badge } from '../components/UI';
 import { KeyVal } from '../components/Bits';
-import { formatCurrency, formatDate, expiryStatus, stockStatus, colors } from '../lib/format';
+import { formatCurrency, formatDate, expiryStatus, stockStatus } from '../lib/format';
 
 // Read-only view of the warehouse's user-created sub-stock locations
 // (locations.type = 'warehouse_sub'). No location create/rename/delete here —
 // that stays in the desktop Warehouse Management app.
 export default function SubStockScreen() {
   const { settings, subStocks, getSubStockValue, loading, refreshing, refresh, loadError } = useWarehouse();
+  const { theme } = useTheme();
+  const styles = useThemedStyles(makeStyles);
   const [openId, setOpenId] = useState(null);
 
   const locs = useMemo(() => (settings.subStockLocations || []).map((l) => {
@@ -33,7 +37,7 @@ export default function SubStockScreen() {
     <Screen>
       <ScrollView
         contentContainerStyle={styles.content}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={colors.accent} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={theme.accent} />}
       >
         <Text style={styles.subtitle}>{locs.length} sub-stock location(s)</Text>
         {loadError ? <Text style={styles.err}>Showing cached data — {loadError}</Text> : null}
@@ -47,7 +51,7 @@ export default function SubStockScreen() {
               <AnimatedPressable onPress={() => setOpenId(open ? null : l.id)}>
                 <View style={styles.rowBetween}>
                   <View style={styles.rowLeft}>
-                    <View style={[styles.dot, { backgroundColor: l.color || colors.accent }]} />
+                    <View style={[styles.dot, { backgroundColor: l.color || theme.accent }]} />
                     <Text style={styles.locName}>{l.name}</Text>
                   </View>
                   <Text style={styles.chev}>{open ? '▾' : '▸'}</Text>
@@ -60,9 +64,9 @@ export default function SubStockScreen() {
                 <KeyVal label="Value" value={formatCurrency(l.value)} />
               </View>
               <View style={styles.badgeRow}>
-                {l.low > 0 ? <Badge label={`${l.low} low`} color={colors.warning} /> : null}
-                {l.out > 0 ? <Badge label={`${l.out} out`} color={colors.danger} /> : null}
-                {l.expiring > 0 ? <Badge label={`${l.expiring} expiring`} color={colors.accent} /> : null}
+                {l.low > 0 ? <Badge label={`${l.low} low`} color={theme.warning} /> : null}
+                {l.out > 0 ? <Badge label={`${l.out} out`} color={theme.danger} /> : null}
+                {l.expiring > 0 ? <Badge label={`${l.expiring} expiring`} color={theme.accent} /> : null}
               </View>
 
               {open && (
@@ -98,22 +102,22 @@ export default function SubStockScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (t) => StyleSheet.create({
   content: { padding: 16, paddingBottom: 40 },
-  subtitle: { color: colors.muted, fontSize: 12, marginBottom: 10 },
-  err: { color: colors.warning, fontSize: 12, marginBottom: 10 },
+  subtitle: { color: t.muted, fontSize: 12, marginBottom: 10 },
+  err: { color: t.warning, fontSize: 12, marginBottom: 10 },
   card: { marginBottom: 12 },
   rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   rowLeft: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 },
   dot: { width: 12, height: 12, borderRadius: 6 },
-  locName: { color: colors.text, fontSize: 16, fontWeight: '800' },
-  chev: { color: colors.muted, fontSize: 14 },
+  locName: { color: t.text, fontSize: 16, fontWeight: '800' },
+  chev: { color: t.muted, fontSize: 14 },
   statsRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 8, gap: 12 },
   badgeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 },
-  itemList: { marginTop: 12, borderTopWidth: 1, borderTopColor: colors.panelBorder, paddingTop: 10 },
-  itemRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: colors.panelBorder },
-  itemName: { color: colors.text, fontSize: 14, fontWeight: '600' },
-  itemMeta: { color: colors.muted, fontSize: 11, marginTop: 2 },
-  itemQty: { color: colors.text, fontSize: 15, fontWeight: '800' },
-  muted: { color: colors.muted, fontSize: 12, paddingVertical: 6 },
+  itemList: { marginTop: 12, borderTopWidth: 1, borderTopColor: t.panelBorder, paddingTop: 10 },
+  itemRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: t.panelBorder },
+  itemName: { color: t.text, fontSize: 14, fontWeight: '600' },
+  itemMeta: { color: t.muted, fontSize: 11, marginTop: 2 },
+  itemQty: { color: t.text, fontSize: 15, fontWeight: '800' },
+  muted: { color: t.muted, fontSize: 12, paddingVertical: 6 },
 });

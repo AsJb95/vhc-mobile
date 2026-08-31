@@ -2,23 +2,24 @@ import { View, StyleSheet, ActivityIndicator } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { ThemeProvider, useTheme } from './src/context/ThemeContext';
 import { AuthProvider, useAuth } from './src/context/AuthContext';
 import { WarehouseProvider } from './src/context/WarehouseContext';
 import { PharmacyProvider } from './src/context/PharmacyContext';
 import ErrorBoundary from './src/components/ErrorBoundary';
 import LoginScreen from './src/screens/LoginScreen';
 import RootNavigator from './src/navigation/RootNavigator';
-import { colors } from './src/lib/format';
 
 function Gate() {
   const { session, loading, roleResolved } = useAuth();
+  const { theme } = useTheme();
 
   // Wait for the session AND (when signed in) the role, so role-gated UI
   // renders in its final shape from the first frame.
   if (loading || (session && !roleResolved)) {
     return (
-      <View style={styles.loading}>
-        <ActivityIndicator color={colors.accent} size="large" />
+      <View style={[styles.loading, { backgroundColor: theme.bg }]}>
+        <ActivityIndicator color={theme.accent} size="large" />
       </View>
     );
   }
@@ -35,21 +36,32 @@ function Gate() {
   );
 }
 
+function ThemedApp() {
+  const { isDark } = useTheme();
+  return (
+    <>
+      <StatusBar style={isDark ? 'light' : 'dark'} />
+      <ErrorBoundary>
+        <AuthProvider>
+          <Gate />
+        </AuthProvider>
+      </ErrorBoundary>
+    </>
+  );
+}
+
 export default function App() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
-        <StatusBar style="light" />
-        <ErrorBoundary>
-          <AuthProvider>
-            <Gate />
-          </AuthProvider>
-        </ErrorBoundary>
+        <ThemeProvider>
+          <ThemedApp />
+        </ThemeProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );
 }
 
 const styles = StyleSheet.create({
-  loading: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bg },
+  loading: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 });

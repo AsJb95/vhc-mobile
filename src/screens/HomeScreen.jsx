@@ -3,9 +3,11 @@ import { ScrollView, View, Text, StyleSheet, RefreshControl } from 'react-native
 import { MotiView } from 'moti';
 import { useWarehouse } from '../context/WarehouseContext';
 import { usePharmacy } from '../context/PharmacyContext';
+import { useTheme } from '../context/ThemeContext';
+import { useThemedStyles } from '../theme/useThemedStyles';
 import { Card, StatCard, Screen, ScreenLoading, AnimatedPressable } from '../components/UI';
 import { KeyVal, SectionTitle, AsOf } from '../components/Bits';
-import { formatCurrency, colors } from '../lib/format';
+import { formatCurrency } from '../lib/format';
 import { periodRange, filterSalesByRange, summarizeSales, buildCostLookup, PAYMENT_BUCKETS } from '../lib/pharmacyReports';
 import { classifyPharmacyStock } from '../lib/pharmacyStock';
 
@@ -20,6 +22,8 @@ export default function HomeScreen({ navigation }) {
   const {
     recentSales, creditOutstanding, asOf, loading: phLoading, refreshing: phRefreshing, refresh: phRefresh, loadError: phError,
   } = usePharmacy();
+  const { theme } = useTheme();
+  const styles = useThemedStyles(makeStyles);
 
   const today = useMemo(() => {
     const { from, to } = periodRange('today');
@@ -54,7 +58,7 @@ export default function HomeScreen({ navigation }) {
     <Screen>
       <ScrollView
         contentContainerStyle={styles.content}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.accent} />}
       >
         <MotiView from={{ opacity: 0, translateY: -8 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 300 }}>
           <Text style={styles.title}>VHC Overview</Text>
@@ -66,8 +70,8 @@ export default function HomeScreen({ navigation }) {
         {/* ---- Pharmacy ---- */}
         <Text style={styles.sectionHead}>Pharmacy</Text>
         <View style={styles.statGrid}>
-          <StatCard index={0} label="Today's Sales" value={formatCurrency(today.totalSales)} color={colors.success} />
-          <StatCard index={1} label="Today's Bills" value={today.billCount} color={colors.accent} />
+          <StatCard index={0} label="Today's Sales" value={formatCurrency(today.totalSales)} color={theme.success} />
+          <StatCard index={1} label="Today's Bills" value={today.billCount} color={theme.accent} />
         </View>
         <AnimatedPressable onPress={toPharmacy('Sales & Reports')}>
           <Card index={2} style={styles.card}>
@@ -85,14 +89,14 @@ export default function HomeScreen({ navigation }) {
         <AnimatedPressable onPress={toPharmacy('Pharmacy Stock')}>
           <Card index={3} style={styles.card}>
             <SectionTitle right={<Text style={styles.link}>Stock ›</Text>}>Pharmacy Stock</SectionTitle>
-            <KeyVal label="Low stock" value={phAlerts.low.length} color={colors.warning} />
-            <KeyVal label="Out of stock" value={phAlerts.outOfStock.length} color={colors.danger} />
-            <KeyVal label="Expiring soon" value={phAlerts.expiring.length} color={colors.accent} />
+            <KeyVal label="Low stock" value={phAlerts.low.length} color={theme.warning} />
+            <KeyVal label="Out of stock" value={phAlerts.outOfStock.length} color={theme.danger} />
+            <KeyVal label="Expiring soon" value={phAlerts.expiring.length} color={theme.accent} />
           </Card>
         </AnimatedPressable>
         <AnimatedPressable onPress={toPharmacy('Credit / Outstanding')}>
           <Card index={4} style={styles.card}>
-            <KeyVal label="Outstanding credit (all-time)" value={formatCurrency(creditOutstanding.total)} strong color={colors.warning} />
+            <KeyVal label="Outstanding credit (all-time)" value={formatCurrency(creditOutstanding.total)} strong color={theme.warning} />
             <Text style={styles.hint}>{creditOutstanding.count} Credit-mode bills · no repayment tracking</Text>
           </Card>
         </AnimatedPressable>
@@ -100,10 +104,10 @@ export default function HomeScreen({ navigation }) {
         {/* ---- Warehouse ---- */}
         <Text style={styles.sectionHead}>Warehouse</Text>
         <View style={styles.statGrid}>
-          <StatCard index={0} label="Main Stock Items" value={mainStock.length} color={colors.accent} />
-          <StatCard index={1} label="Main Stock Value" value={formatCurrency(wh.totalValue)} color={colors.success} />
-          <StatCard index={2} label="Active Alerts" value={wh.activeAlerts} sub={`${wh.alerts.expired.length} expired · ${wh.alerts.outOfStock.length} out`} color={colors.danger} />
-          <StatCard index={3} label="Pending POs" value={wh.pendingPOs} sub={`${purchaseOrders.length} total`} color={colors.warning} />
+          <StatCard index={0} label="Main Stock Items" value={mainStock.length} color={theme.accent} />
+          <StatCard index={1} label="Main Stock Value" value={formatCurrency(wh.totalValue)} color={theme.success} />
+          <StatCard index={2} label="Active Alerts" value={wh.activeAlerts} sub={`${wh.alerts.expired.length} expired · ${wh.alerts.outOfStock.length} out`} color={theme.danger} />
+          <StatCard index={3} label="Pending POs" value={wh.pendingPOs} sub={`${purchaseOrders.length} total`} color={theme.warning} />
         </View>
         <AnimatedPressable onPress={toWarehouse('Orders')}>
           <Card index={4} style={styles.card}>
@@ -125,19 +129,19 @@ export default function HomeScreen({ navigation }) {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (t) => StyleSheet.create({
   content: { padding: 16, paddingBottom: 40 },
-  title: { color: colors.text, fontSize: 28, fontWeight: '800', letterSpacing: -0.5, marginBottom: 4 },
-  errorBanner: { color: colors.warning, fontSize: 12, marginBottom: 8 },
-  sectionHead: { color: colors.muted, fontSize: 12, fontWeight: '800', letterSpacing: 1, textTransform: 'uppercase', marginTop: 14, marginBottom: 10 },
+  title: { color: t.text, fontSize: 28, fontWeight: '800', letterSpacing: -0.5, marginBottom: 4 },
+  errorBanner: { color: t.warning, fontSize: 12, marginBottom: 8 },
+  sectionHead: { color: t.muted, fontSize: 12, fontWeight: '800', letterSpacing: 1, textTransform: 'uppercase', marginTop: 14, marginBottom: 10 },
   statGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
   card: { marginBottom: 12 },
-  link: { color: colors.accent, fontSize: 12, fontWeight: '700' },
-  cardLink: { color: colors.text, fontSize: 15, fontWeight: '700' },
+  link: { color: t.accent, fontSize: 12, fontWeight: '700' },
+  cardLink: { color: t.text, fontSize: 15, fontWeight: '700' },
   rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  hint: { color: colors.muted, fontSize: 11, marginTop: 8, fontStyle: 'italic' },
+  hint: { color: t.muted, fontSize: 11, marginTop: 8, fontStyle: 'italic' },
   payRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 6 },
-  payCell: { flex: 1, backgroundColor: colors.bg, borderRadius: 10, borderWidth: 1, borderColor: colors.panelBorder, padding: 8, alignItems: 'center' },
-  payVal: { color: colors.text, fontSize: 12, fontWeight: '800' },
-  payLabel: { color: colors.muted, fontSize: 10, marginTop: 2 },
+  payCell: { flex: 1, backgroundColor: t.chip, borderRadius: 12, borderWidth: 1, borderColor: t.panelBorder, padding: 8, alignItems: 'center' },
+  payVal: { color: t.text, fontSize: 12, fontWeight: '800' },
+  payLabel: { color: t.muted, fontSize: 10, marginTop: 2 },
 });

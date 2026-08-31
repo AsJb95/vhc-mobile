@@ -3,9 +3,12 @@ import { View, Text, FlatList, TextInput, StyleSheet, RefreshControl } from 'rea
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useWarehouse } from '../context/WarehouseContext';
 import { useAuth } from '../context/AuthContext';
-import { Card, Badge, EmptyState, ScreenLoading, AnimatedPressable, Screen } from '../components/UI';
+import { useTheme } from '../context/ThemeContext';
+import { useThemedStyles } from '../theme/useThemedStyles';
+import { Card, Badge, EmptyState, ScreenLoading, StatCard, AnimatedPressable, Screen } from '../components/UI';
+import { SectionTitle } from '../components/Bits';
 import AddItemModal from '../components/AddItemModal';
-import { formatCurrency, expiryStatus, stockStatus, colors } from '../lib/format';
+import { formatCurrency, expiryStatus, stockStatus } from '../lib/format';
 
 const TABS = [
   { key: 'all', label: 'All' },
@@ -16,8 +19,13 @@ const TABS = [
 ];
 
 export default function StockScreen() {
-  const { mainStock, settings, adjustStock, loading, refreshing, refresh, stockTruncated } = useWarehouse();
+  const {
+    mainStock, settings, adjustStock, loading, refreshing, refresh, stockTruncated,
+    getAlerts, getTotalValue, subStocks,
+  } = useWarehouse();
   const { canWriteWarehouse } = useAuth();
+  const { theme } = useTheme();
+  const styles = useThemedStyles(makeStyles);
   const [search, setSearch] = useState('');
   const [tab, setTab] = useState('all');
   const [modalOpen, setModalOpen] = useState(false);
@@ -25,6 +33,26 @@ export default function StockScreen() {
 
   function openAdd() { setEditingItem(null); setModalOpen(true); }
   function openEdit(item) { setEditingItem(item); setModalOpen(true); }
+
+  // Headline numbers for the dashboard. getAlerts() is the same bucketing the
+  // Alerts screen uses, so the counts always agree.
+  const summary = useMemo(() => {
+    const a = getAlerts();
+    const subStockUnits = Object.values(subStocks || {}).reduce(
+      (sum, list) => sum + (list || []).reduce((s, i) => s + (i.stock || 0), 0),
+      0,
+    );
+    return {
+      totalProducts: mainStock.length,
+      totalValue: getTotalValue(),
+      low: a.lowStock.length,
+      out: a.outOfStock.length,
+      expiring: a.expiring.length,
+      expired: a.expired.length,
+      subStockUnits,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mainStock, subStocks, settings.lowStockThreshold, settings.expiryAlertDays]);
 
   const filtered = useMemo(() => {
     const now = new Date();
@@ -46,6 +74,35 @@ export default function StockScreen() {
 
   if (loading) return <ScreenLoading />;
 
+  // Interactive dashboard — tapping an alert tile filters the list below to that
+  // category (and clears any active search so the result is never hidden).
+  const focusTab = (key) => { setTab(key); setSearch(''); };
+  const dashboard = (
+    <View style={styles.dashboard}>
+      <View style={styles.statGrid}>
+        <StatCard index={0} label="Total Products" value={summary.totalProducts} color={theme.accent} />
+        <StatCard index={1} label="Main Stock Value" value={formatCurrency(summary.totalValue)} color={theme.success} />
+      </View>
+
+      <Card style={styles.alertsCard}>
+        <SectionTitle>Stock Health</SectionTitle>
+        <View style={styles.tileGrid}>
+          <AlertTile styles={styles} label="Low" value={summary.low} color={theme.warning} active={tab === 'low'} onPress={() => focusTab('low')} />
+          <AlertTile styles={styles} label="Out of Stock" value={summary.out} color={theme.danger} active={tab === 'out'} onPress={() => focusTab('out')} />
+          <AlertTile styles={styles} label="Expiring Soon" value={summary.expiring} color={theme.accent} active={tab === 'expiring'} onPress={() => focusTab('expiring')} />
+          <AlertTile styles={styles} label="Expired" value={summary.expired} color={theme.danger} active={tab === 'expired'} onPress={() => focusTab('expired')} />
+        </View>
+        {tab !== 'all' ? (
+          <AnimatedPressable style={styles.clearBtn} onPress={() => focusTab('all')}>
+            <Text style={styles.clearBtnText}>Showing “{TABS.find((t) => t.key === tab)?.label}” · tap to show all</Text>
+          </AnimatedPressable>
+        ) : (
+          <Text style={styles.hint}>Tap a tile to filter the list below. Sub-stock locations hold {summary.subStockUnits} unit(s).</Text>
+        )}
+      </Card>
+    </View>
+  );
+
   return (
     <Screen>
       <View style={styles.header}>
@@ -59,7 +116,7 @@ export default function StockScreen() {
         <TextInput
           style={styles.search}
           placeholder="Search medicine, batch, stockist..."
-          placeholderTextColor={colors.muted}
+          placeholderTextColor={theme.muted}
           value={search}
           onChangeText={setSearch}
         />
@@ -76,7 +133,8 @@ export default function StockScreen() {
         data={filtered}
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.list}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={colors.accent} />}
+        ListHeaderComponent={dashboard}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={theme.accent} />}
         ListEmptyComponent={<EmptyState text="No items match this filter" icon="📦" />}
         renderItem={({ item, index }) => {
           const exp = expiryStatus(item.expiry);
@@ -116,7 +174,7 @@ export default function StockScreen() {
 
       {canWriteWarehouse && (
         <AnimatedPressable style={styles.fab} onPress={openAdd}>
-          <Ionicons name="add" size={28} color="#fff" />
+          <Ionicons name="add" size={28} color={theme.onAccent} />
         </AnimatedPressable>
       )}
 
@@ -125,33 +183,55 @@ export default function StockScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.bg },
+function AlertTile({ styles, label, value, color, active, onPress }) {
+  return (
+    <AnimatedPressable style={[styles.tile, active && { borderColor: color }]} onPress={onPress}>
+      <Text style={[styles.tileValue, { color }]}>{value}</Text>
+      <Text style={styles.tileLabel}>{label}</Text>
+    </AnimatedPressable>
+  );
+}
+
+const makeStyles = (t) => StyleSheet.create({
+  container: { flex: 1, backgroundColor: t.bg },
   header: { padding: 16, paddingBottom: 8 },
-  title: { color: colors.text, fontSize: 26, fontWeight: '800', letterSpacing: -0.4 },
-  subtitle: { color: colors.muted, fontSize: 12, marginBottom: 12 },
-  truncatedNote: { color: colors.warning, fontSize: 11, marginBottom: 10 },
+  title: { color: t.text, fontSize: 26, fontWeight: '800', letterSpacing: -0.4 },
+  subtitle: { color: t.muted, fontSize: 12, marginBottom: 12 },
+  truncatedNote: { color: t.warning, fontSize: 11, marginBottom: 10 },
   search: {
-    backgroundColor: colors.panel, borderWidth: 1, borderColor: colors.panelBorder, borderRadius: 10,
-    color: colors.text, paddingHorizontal: 14, paddingVertical: 10, marginBottom: 10,
+    backgroundColor: t.panel, borderWidth: 1, borderColor: t.panelBorder, borderRadius: 12,
+    color: t.text, paddingHorizontal: 14, paddingVertical: 10, marginBottom: 10,
   },
   tabRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  tabBtn: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: colors.panel, borderWidth: 1, borderColor: colors.panelBorder, marginRight: 6, marginBottom: 6 },
-  tabBtnActive: { backgroundColor: colors.accent, borderColor: colors.accent },
-  tabText: { color: colors.muted, fontSize: 12 },
-  tabTextActive: { color: '#fff', fontWeight: '600' },
+  tabBtn: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: t.chip, borderWidth: 1, borderColor: t.panelBorder, marginRight: 6, marginBottom: 6 },
+  tabBtnActive: { backgroundColor: t.accent, borderColor: t.accent },
+  tabText: { color: t.muted, fontSize: 12 },
+  tabTextActive: { color: t.onAccent, fontWeight: '600' },
   list: { padding: 16, paddingTop: 8, paddingBottom: 32 },
+  dashboard: { marginBottom: 4 },
+  statGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
+  alertsCard: { marginBottom: 12 },
+  tileGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  tile: {
+    flexBasis: '47%', flexGrow: 1, backgroundColor: t.chip, borderRadius: 14,
+    borderWidth: 1, borderColor: t.panelBorder, paddingVertical: 12, paddingHorizontal: 14,
+  },
+  tileValue: { fontSize: 22, fontWeight: '800' },
+  tileLabel: { color: t.muted, fontSize: 11, marginTop: 2 },
+  clearBtn: { marginTop: 12, alignSelf: 'flex-start' },
+  clearBtnText: { color: t.accent, fontSize: 12, fontWeight: '700' },
+  hint: { color: t.muted, fontSize: 11, marginTop: 12, fontStyle: 'italic' },
   itemCard: { marginBottom: 10 },
   itemRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
-  itemName: { color: colors.text, fontWeight: '600', fontSize: 15 },
-  itemMeta: { color: colors.muted, fontSize: 12 },
-  stockValue: { color: colors.text, fontWeight: '700' },
+  itemName: { color: t.text, fontWeight: '600', fontSize: 15 },
+  itemMeta: { color: t.muted, fontSize: 12 },
+  stockValue: { color: t.text, fontWeight: '700' },
   adjustRow: { flexDirection: 'row', gap: 8 },
-  adjustBtn: { width: 32, height: 32, borderRadius: 8, backgroundColor: colors.panelBorder, alignItems: 'center', justifyContent: 'center', marginLeft: 8 },
-  adjustBtnText: { color: colors.text, fontSize: 18, fontWeight: '700' },
+  adjustBtn: { width: 32, height: 32, borderRadius: 10, backgroundColor: t.chip, borderWidth: 1, borderColor: t.panelBorder, alignItems: 'center', justifyContent: 'center', marginLeft: 8 },
+  adjustBtnText: { color: t.text, fontSize: 18, fontWeight: '700' },
   fab: {
     position: 'absolute', right: 20, bottom: 24, width: 56, height: 56, borderRadius: 28,
-    backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center',
-    shadowColor: colors.accent, shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.4, shadowRadius: 12, elevation: 6,
+    backgroundColor: t.accent, alignItems: 'center', justifyContent: 'center',
+    shadowColor: t.accent, shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.4, shadowRadius: 12, elevation: 6,
   },
 });

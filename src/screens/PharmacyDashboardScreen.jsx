@@ -2,9 +2,11 @@ import { useMemo } from 'react';
 import { ScrollView, View, Text, StyleSheet, RefreshControl } from 'react-native';
 import { useWarehouse } from '../context/WarehouseContext';
 import { usePharmacy } from '../context/PharmacyContext';
+import { useTheme } from '../context/ThemeContext';
+import { useThemedStyles } from '../theme/useThemedStyles';
 import { Card, StatCard, Screen, ScreenLoading, AnimatedPressable } from '../components/UI';
 import { KeyVal, SectionTitle, AsOf } from '../components/Bits';
-import { formatCurrency, colors } from '../lib/format';
+import { formatCurrency } from '../lib/format';
 import { periodRange, filterSalesByRange, summarizeSales, buildCostLookup, PAYMENT_BUCKETS } from '../lib/pharmacyReports';
 import { classifyPharmacyStock } from '../lib/pharmacyStock';
 
@@ -13,6 +15,8 @@ export default function PharmacyDashboardScreen({ navigation }) {
   const {
     recentSales, creditOutstanding, asOf, loading: phLoading, refreshing, refresh, loadError, salesTruncated,
   } = usePharmacy();
+  const { theme } = useTheme();
+  const styles = useThemedStyles(makeStyles);
 
   const today = useMemo(() => {
     const { from, to } = periodRange('today');
@@ -34,7 +38,7 @@ export default function PharmacyDashboardScreen({ navigation }) {
     <Screen>
       <ScrollView
         contentContainerStyle={styles.content}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={colors.accent} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={theme.accent} />}
       >
         <Text style={styles.title}>Pharmacy</Text>
         <AsOf at={asOf} />
@@ -44,8 +48,8 @@ export default function PharmacyDashboardScreen({ navigation }) {
         ) : null}
 
         <View style={styles.statGrid}>
-          <StatCard index={0} label="Today's Sales" value={formatCurrency(today.totalSales)} color={colors.success} />
-          <StatCard index={1} label="Today's Bills" value={today.billCount} sub={`Avg ${formatCurrency(today.avgBill)}`} color={colors.accent} />
+          <StatCard index={0} label="Today's Sales" value={formatCurrency(today.totalSales)} color={theme.success} />
+          <StatCard index={1} label="Today's Bills" value={today.billCount} sub={`Avg ${formatCurrency(today.avgBill)}`} color={theme.accent} />
         </View>
 
         <AnimatedPressable onPress={go('Sales & Reports')}>
@@ -64,10 +68,10 @@ export default function PharmacyDashboardScreen({ navigation }) {
           <Card index={3} style={styles.card}>
             <SectionTitle right={<Text style={styles.link}>Stock ›</Text>}>Stock Alerts</SectionTitle>
             <View style={styles.miniGrid}>
-              <Mini label="Low" value={stockAlerts.low.length} color={colors.warning} />
-              <Mini label="Critical" value={stockAlerts.critical.length} color={colors.danger} />
-              <Mini label="Out of Stock" value={stockAlerts.outOfStock.length} color={colors.danger} />
-              <Mini label="Expiring Soon" value={stockAlerts.expiring.length} color={colors.accent} />
+              <Mini label="Low" value={stockAlerts.low.length} color={theme.warning} />
+              <Mini label="Critical" value={stockAlerts.critical.length} color={theme.danger} />
+              <Mini label="Out of Stock" value={stockAlerts.outOfStock.length} color={theme.danger} />
+              <Mini label="Expiring Soon" value={stockAlerts.expiring.length} color={theme.accent} />
             </View>
             <Text style={styles.hint}>Pharmacy thresholds: ≤20 units / ≤2 strips (low), half that (critical).</Text>
           </Card>
@@ -76,7 +80,7 @@ export default function PharmacyDashboardScreen({ navigation }) {
         <AnimatedPressable onPress={go('Credit / Outstanding')}>
           <Card index={4} style={styles.card}>
             <SectionTitle right={<Text style={styles.link}>Details ›</Text>}>Outstanding Credit</SectionTitle>
-            <KeyVal label="Total billed as Credit" value={formatCurrency(creditOutstanding.total)} strong color={colors.warning} />
+            <KeyVal label="Total billed as Credit" value={formatCurrency(creditOutstanding.total)} strong color={theme.warning} />
             <KeyVal label="Credit bills" value={creditOutstanding.count} />
             <Text style={styles.hint}>All-time Credit-mode bills. The POS does not track repayments.</Text>
           </Card>
@@ -101,6 +105,7 @@ export default function PharmacyDashboardScreen({ navigation }) {
 }
 
 function Mini({ label, value, color }) {
+  const styles = useThemedStyles(makeStyles);
   return (
     <View style={styles.mini}>
       <Text style={[styles.miniValue, { color }]}>{value}</Text>
@@ -109,19 +114,19 @@ function Mini({ label, value, color }) {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (t) => StyleSheet.create({
   content: { padding: 16, paddingBottom: 40 },
-  title: { color: colors.text, fontSize: 28, fontWeight: '800', letterSpacing: -0.5, marginBottom: 4 },
-  errorBanner: { color: colors.warning, fontSize: 12, marginBottom: 10 },
+  title: { color: t.text, fontSize: 28, fontWeight: '800', letterSpacing: -0.5, marginBottom: 4 },
+  errorBanner: { color: t.warning, fontSize: 12, marginBottom: 10 },
   statGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
   card: { marginBottom: 12 },
-  divider: { height: 1, backgroundColor: colors.panelBorder, marginVertical: 8 },
-  link: { color: colors.accent, fontSize: 12, fontWeight: '700' },
-  cardLink: { color: colors.text, fontSize: 15, fontWeight: '700' },
+  divider: { height: 1, backgroundColor: t.panelBorder, marginVertical: 8 },
+  link: { color: t.accent, fontSize: 12, fontWeight: '700' },
+  cardLink: { color: t.text, fontSize: 15, fontWeight: '700' },
   rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  hint: { color: colors.muted, fontSize: 11, marginTop: 8, fontStyle: 'italic' },
+  hint: { color: t.muted, fontSize: 11, marginTop: 8, fontStyle: 'italic' },
   miniGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  mini: { flexBasis: '47%', backgroundColor: colors.bg, borderRadius: 12, borderWidth: 1, borderColor: colors.panelBorder, padding: 12 },
+  mini: { flexBasis: '47%', backgroundColor: t.chip, borderRadius: 14, borderWidth: 1, borderColor: t.panelBorder, padding: 12 },
   miniValue: { fontSize: 22, fontWeight: '800' },
-  miniLabel: { color: colors.muted, fontSize: 11, marginTop: 2 },
+  miniLabel: { color: t.muted, fontSize: 11, marginTop: 2 },
 });

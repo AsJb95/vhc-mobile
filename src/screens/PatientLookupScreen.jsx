@@ -2,14 +2,18 @@ import { useEffect, useRef, useState } from 'react';
 import { View, Text, FlatList, TextInput, StyleSheet, ActivityIndicator, ScrollView } from 'react-native';
 import { useAuth } from '../context/AuthContext';
 import { usePharmacy } from '../context/PharmacyContext';
+import { useTheme } from '../context/ThemeContext';
+import { useThemedStyles } from '../theme/useThemedStyles';
 import { Card, Screen, EmptyState, AnimatedPressable, Badge } from '../components/UI';
 import { KeyVal, SectionTitle } from '../components/Bits';
-import { formatCurrency, formatDateTime, formatDate, colors } from '../lib/format';
+import { formatCurrency, formatDateTime, formatDate } from '../lib/format';
 import { paymentBucket } from '../lib/pharmacyReports';
 
 export default function PatientLookupScreen() {
   const { role } = useAuth();
   const { searchPatients, fetchPatientHistory } = usePharmacy();
+  const { theme } = useTheme();
+  const styles = useThemedStyles(makeStyles);
 
   const [query, setQuery] = useState('');
   const [results, setResults] = useState([]);
@@ -67,7 +71,7 @@ export default function PatientLookupScreen() {
           </AnimatedPressable>
 
           <Text style={styles.name}>{selected.name}</Text>
-          {selected.is_manual ? <Badge label="Manually added" color={colors.purple} /> : null}
+          {selected.is_manual ? <Badge label="Manually added" color={theme.purple} /> : null}
 
           <Card style={styles.card}>
             <SectionTitle>Patient</SectionTitle>
@@ -84,7 +88,7 @@ export default function PatientLookupScreen() {
           </Card>
 
           {historyLoading ? (
-            <ActivityIndicator color={colors.accent} style={{ marginTop: 20 }} />
+            <ActivityIndicator color={theme.accent} style={{ marginTop: 20 }} />
           ) : history?.error ? (
             <Text style={styles.err}>Could not load history — {history.error}</Text>
           ) : sales.length === 0 ? (
@@ -116,7 +120,7 @@ export default function PatientLookupScreen() {
         <TextInput
           style={styles.search}
           placeholder="Search patient by name or contact…"
-          placeholderTextColor={colors.muted}
+          placeholderTextColor={theme.muted}
           value={query}
           onChangeText={setQuery}
           autoCapitalize="none"
@@ -125,7 +129,7 @@ export default function PatientLookupScreen() {
       </View>
 
       {searching ? (
-        <ActivityIndicator color={colors.accent} style={{ marginTop: 24 }} />
+        <ActivityIndicator color={theme.accent} style={{ marginTop: 24 }} />
       ) : searchErr ? (
         <Text style={styles.err}>Search failed — {searchErr}</Text>
       ) : (
@@ -154,24 +158,24 @@ export default function PatientLookupScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (t) => StyleSheet.create({
   header: { padding: 16, paddingBottom: 6 },
   content: { padding: 16, paddingBottom: 40 },
   search: {
-    backgroundColor: colors.panel, borderWidth: 1, borderColor: colors.panelBorder, borderRadius: 10,
-    color: colors.text, paddingHorizontal: 14, paddingVertical: 12,
+    backgroundColor: t.panel, borderWidth: 1, borderColor: t.panelBorder, borderRadius: 12,
+    color: t.text, paddingHorizontal: 14, paddingVertical: 12,
   },
-  hint: { color: colors.muted, fontSize: 11, marginTop: 8, fontStyle: 'italic' },
+  hint: { color: t.muted, fontSize: 11, marginTop: 8, fontStyle: 'italic' },
   list: { padding: 16, paddingTop: 8, paddingBottom: 32 },
   card: { marginBottom: 10 },
-  name: { color: colors.text, fontWeight: '800', fontSize: 16, marginBottom: 4 },
-  meta: { color: colors.muted, fontSize: 12, marginTop: 2 },
-  muted: { color: colors.muted, fontSize: 12 },
-  err: { color: colors.danger, fontSize: 13, padding: 16 },
+  name: { color: t.text, fontWeight: '800', fontSize: 16, marginBottom: 4 },
+  meta: { color: t.muted, fontSize: 12, marginTop: 2 },
+  muted: { color: t.muted, fontSize: 12 },
+  err: { color: t.danger, fontSize: 13, padding: 16 },
   backBtn: { marginBottom: 10 },
-  backTxt: { color: colors.accent, fontWeight: '700' },
+  backTxt: { color: t.accent, fontWeight: '700' },
   rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  billId: { color: colors.text, fontWeight: '700' },
-  billTotal: { color: colors.text, fontWeight: '800' },
-  itemLine: { color: colors.muted, fontSize: 12, marginTop: 3 },
+  billId: { color: t.text, fontWeight: '700' },
+  billTotal: { color: t.text, fontWeight: '800' },
+  itemLine: { color: t.muted, fontSize: 12, marginTop: 3 },
 });

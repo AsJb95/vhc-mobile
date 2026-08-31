@@ -1,8 +1,9 @@
 import { Modal, View, Text, FlatList, StyleSheet } from 'react-native';
 import { Screen, AnimatedPressable, EmptyState } from './UI';
-import { colors } from '../lib/format';
+import { useThemedStyles } from '../theme/useThemedStyles';
 
 export default function SelectModal({ visible, title, options, onSelect, onClose, renderLabel, renderSub }) {
+  const styles = useThemedStyles(makeStyles);
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <Screen>
@@ -29,16 +30,16 @@ export default function SelectModal({ visible, title, options, onSelect, onClose
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (t) => StyleSheet.create({
   header: { padding: 16, paddingBottom: 8 },
-  title: { color: colors.text, fontSize: 20, fontWeight: '800' },
+  title: { color: t.text, fontSize: 20, fontWeight: '800' },
   list: { paddingHorizontal: 16, paddingBottom: 16 },
   row: {
-    backgroundColor: colors.panel, borderWidth: 1, borderColor: colors.panelBorder,
-    borderRadius: 12, padding: 14, marginBottom: 8,
+    backgroundColor: t.card, borderWidth: 1, borderColor: t.panelBorder,
+    borderRadius: 14, padding: 14, marginBottom: 8,
   },
-  rowLabel: { color: colors.text, fontSize: 15, fontWeight: '600' },
-  rowSub: { color: colors.muted, fontSize: 12, marginTop: 3 },
-  closeBtn: { padding: 16, alignItems: 'center', borderTopWidth: 1, borderTopColor: colors.panelBorder },
-  closeBtnText: { color: colors.accent, fontWeight: '600' },
+  rowLabel: { color: t.text, fontSize: 15, fontWeight: '600' },
+  rowSub: { color: t.muted, fontSize: 12, marginTop: 3 },
+  closeBtn: { padding: 16, alignItems: 'center', borderTopWidth: 1, borderTopColor: t.panelBorder },
+  closeBtnText: { color: t.accent, fontWeight: '600' },
 });

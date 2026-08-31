@@ -3,9 +3,11 @@ import { View, Text, FlatList, TextInput, StyleSheet, RefreshControl } from 'rea
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useWarehouse } from '../context/WarehouseContext';
 import { useAuth } from '../context/AuthContext';
+import { useTheme } from '../context/ThemeContext';
+import { useThemedStyles } from '../theme/useThemedStyles';
 import { Card, Badge, EmptyState, ScreenLoading, AnimatedPressable, Screen } from '../components/UI';
 import AddItemModal from '../components/AddItemModal';
-import { formatCurrency, expiryStatus, colors } from '../lib/format';
+import { formatCurrency, expiryStatus } from '../lib/format';
 import {
   pharmacyStockStatus, isPharmacyLow, isPharmacyCritical, isPharmacyOutOfStock,
   PHARMACY_LOW_UNITS, PHARMACY_LOW_STRIPS,
@@ -23,6 +25,8 @@ const TABS = [
 export default function PharmacyStockScreen() {
   const { pharmacyStock, pharmacyLocation, settings, adjustStock, loading, refreshing, refresh, stockTruncated } = useWarehouse();
   const { canWritePharmacy } = useAuth();
+  const { theme } = useTheme();
+  const styles = useThemedStyles(makeStyles);
   const [search, setSearch] = useState('');
   const [tab, setTab] = useState('all');
   const [modalOpen, setModalOpen] = useState(false);
@@ -70,7 +74,7 @@ export default function PharmacyStockScreen() {
         <TextInput
           style={styles.search}
           placeholder="Search medicine, batch, stockist..."
-          placeholderTextColor={colors.muted}
+          placeholderTextColor={theme.muted}
           value={search}
           onChangeText={setSearch}
         />
@@ -87,7 +91,7 @@ export default function PharmacyStockScreen() {
         data={filtered}
         keyExtractor={(item, idx) => item.id || String(idx)}
         contentContainerStyle={styles.list}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={colors.accent} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={theme.accent} />}
         ListEmptyComponent={
           <EmptyState
             text={pharmacyLocation ? 'No pharmacy stock yet. Add items with the + button, or transfer them in from the desktop Warehouse app.' : 'No Pharmacy location configured yet'}
@@ -96,7 +100,7 @@ export default function PharmacyStockScreen() {
         }
         renderItem={({ item, index }) => {
           const exp = expiryStatus(item.expiry);
-          const status = pharmacyStockStatus(item, colors);
+          const status = pharmacyStockStatus(item, theme);
           return (
             <AnimatedPressable onPress={() => canWritePharmacy && openEdit(item)} disabled={!canWritePharmacy}>
               <Card index={index} style={styles.itemCard}>
@@ -137,7 +141,7 @@ export default function PharmacyStockScreen() {
 
       {canWritePharmacy && (
         <AnimatedPressable style={styles.fab} onPress={openAdd}>
-          <Ionicons name="add" size={28} color="#fff" />
+          <Ionicons name="add" size={28} color={theme.onAccent} />
         </AnimatedPressable>
       )}
 
@@ -146,33 +150,33 @@ export default function PharmacyStockScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (t) => StyleSheet.create({
   header: { padding: 16, paddingBottom: 8 },
-  title: { color: colors.text, fontSize: 26, fontWeight: '800', letterSpacing: -0.4 },
-  subtitle: { color: colors.muted, fontSize: 12, marginBottom: 6 },
-  thresholdNote: { color: colors.muted, fontSize: 11, marginBottom: 10, fontStyle: 'italic' },
-  truncatedNote: { color: colors.warning, fontSize: 11, marginBottom: 10 },
+  title: { color: t.text, fontSize: 26, fontWeight: '800', letterSpacing: -0.4 },
+  subtitle: { color: t.muted, fontSize: 12, marginBottom: 6 },
+  thresholdNote: { color: t.muted, fontSize: 11, marginBottom: 10, fontStyle: 'italic' },
+  truncatedNote: { color: t.warning, fontSize: 11, marginBottom: 10 },
   search: {
-    backgroundColor: colors.panel, borderWidth: 1, borderColor: colors.panelBorder, borderRadius: 10,
-    color: colors.text, paddingHorizontal: 14, paddingVertical: 10, marginBottom: 10,
+    backgroundColor: t.panel, borderWidth: 1, borderColor: t.panelBorder, borderRadius: 12,
+    color: t.text, paddingHorizontal: 14, paddingVertical: 10, marginBottom: 10,
   },
   tabRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  tabBtn: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: colors.panel, borderWidth: 1, borderColor: colors.panelBorder, marginRight: 6, marginBottom: 6 },
-  tabBtnActive: { backgroundColor: colors.accent, borderColor: colors.accent },
-  tabText: { color: colors.muted, fontSize: 12 },
-  tabTextActive: { color: '#fff', fontWeight: '600' },
+  tabBtn: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: t.chip, borderWidth: 1, borderColor: t.panelBorder, marginRight: 6, marginBottom: 6 },
+  tabBtnActive: { backgroundColor: t.accent, borderColor: t.accent },
+  tabText: { color: t.muted, fontSize: 12 },
+  tabTextActive: { color: t.onAccent, fontWeight: '600' },
   list: { padding: 16, paddingTop: 8, paddingBottom: 32 },
   itemCard: { marginBottom: 10 },
   itemRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
-  itemName: { color: colors.text, fontWeight: '600', fontSize: 15 },
-  itemMeta: { color: colors.muted, fontSize: 12 },
-  stockValue: { color: colors.text, fontWeight: '700' },
+  itemName: { color: t.text, fontWeight: '600', fontSize: 15 },
+  itemMeta: { color: t.muted, fontSize: 12 },
+  stockValue: { color: t.text, fontWeight: '700' },
   adjustRow: { flexDirection: 'row', gap: 8 },
-  adjustBtn: { width: 32, height: 32, borderRadius: 8, backgroundColor: colors.panelBorder, alignItems: 'center', justifyContent: 'center', marginLeft: 8 },
-  adjustBtnText: { color: colors.text, fontSize: 18, fontWeight: '700' },
+  adjustBtn: { width: 32, height: 32, borderRadius: 10, backgroundColor: t.chip, borderWidth: 1, borderColor: t.panelBorder, alignItems: 'center', justifyContent: 'center', marginLeft: 8 },
+  adjustBtnText: { color: t.text, fontSize: 18, fontWeight: '700' },
   fab: {
     position: 'absolute', right: 20, bottom: 24, width: 56, height: 56, borderRadius: 28,
-    backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center',
-    shadowColor: colors.accent, shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.4, shadowRadius: 12, elevation: 6,
+    backgroundColor: t.accent, alignItems: 'center', justifyContent: 'center',
+    shadowColor: t.accent, shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.4, shadowRadius: 12, elevation: 6,
   },
 });

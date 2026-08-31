@@ -2,7 +2,27 @@ import { Component, Fragment } from 'react';
 import { Text, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { AnimatedPressable } from './UI';
-import { colors } from '../lib/format';
+import { useTheme } from '../context/ThemeContext';
+import { useThemedStyles } from '../theme/useThemedStyles';
+
+function ErrorFallback({ error, onReset }) {
+  const { theme } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+  return (
+    <SafeAreaView style={styles.container}>
+      <ScrollView contentContainerStyle={styles.content}>
+        <Text style={styles.emoji}>⚠️</Text>
+        <Text style={styles.title}>Something went wrong</Text>
+        <Text style={styles.message}>
+          {error?.message || 'An unexpected error occurred.'}
+        </Text>
+        <AnimatedPressable style={styles.button} onPress={onReset}>
+          <Text style={[styles.buttonText, { color: theme.onAccent }]}>Try again</Text>
+        </AnimatedPressable>
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
 
 // App-level error boundary: a render/lifecycle throw anywhere below this point
 // (e.g. a hook-order mismatch, a bad server payload) is caught here and shown
@@ -35,32 +55,18 @@ export default class ErrorBoundary extends Component {
     if (!error) {
       return <Fragment key={resetKey}>{this.props.children}</Fragment>;
     }
-
-    return (
-      <SafeAreaView style={styles.container}>
-        <ScrollView contentContainerStyle={styles.content}>
-          <Text style={styles.emoji}>⚠️</Text>
-          <Text style={styles.title}>Something went wrong</Text>
-          <Text style={styles.message}>
-            {error?.message || 'An unexpected error occurred.'}
-          </Text>
-          <AnimatedPressable style={styles.button} onPress={this.handleReset}>
-            <Text style={styles.buttonText}>Try again</Text>
-          </AnimatedPressable>
-        </ScrollView>
-      </SafeAreaView>
-    );
+    return <ErrorFallback error={error} onReset={this.handleReset} />;
   }
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.bg },
+const makeStyles = (t) => StyleSheet.create({
+  container: { flex: 1, backgroundColor: t.bg },
   content: { flexGrow: 1, alignItems: 'center', justifyContent: 'center', padding: 32 },
   emoji: { fontSize: 40, marginBottom: 16 },
-  title: { color: colors.text, fontSize: 20, fontWeight: '800', marginBottom: 8, textAlign: 'center' },
-  message: { color: colors.muted, fontSize: 13, textAlign: 'center', marginBottom: 24 },
+  title: { color: t.text, fontSize: 20, fontWeight: '800', marginBottom: 8, textAlign: 'center' },
+  message: { color: t.muted, fontSize: 13, textAlign: 'center', marginBottom: 24 },
   button: {
-    backgroundColor: colors.accent, borderRadius: 12, paddingVertical: 14, paddingHorizontal: 32, alignItems: 'center',
+    backgroundColor: t.accent, borderRadius: 12, paddingVertical: 14, paddingHorizontal: 32, alignItems: 'center',
   },
-  buttonText: { color: '#fff', fontWeight: '700', fontSize: 15 },
+  buttonText: { fontWeight: '700', fontSize: 15 },
 });

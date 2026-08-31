@@ -4,13 +4,14 @@ import { Screen, AnimatedPressable, Card } from './UI';
 import { FormField } from './FormField';
 import SelectModal from './SelectModal';
 import { useWarehouse } from '../context/WarehouseContext';
-import { colors } from '../lib/format';
+import { useThemedStyles } from '../theme/useThemedStyles';
 
 let rowSeq = 0;
 const newRow = () => ({ mainStockId: '', qty: '', _uid: `r${++rowSeq}` });
 
 export default function CreateTransferModal({ visible, onClose }) {
   const { mainStock, settings, createTransferOrder } = useWarehouse();
+  const styles = useThemedStyles(makeStyles);
   const [toLocationId, setToLocationId] = useState('');
   const [transferDate, setTransferDate] = useState(new Date().toISOString().slice(0, 10));
   const [notes, setNotes] = useState('');
@@ -144,26 +145,26 @@ export default function CreateTransferModal({ visible, onClose }) {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (t) => StyleSheet.create({
   content: { padding: 16, paddingBottom: 32 },
-  title: { color: colors.text, fontSize: 22, fontWeight: '800', marginBottom: 16 },
-  label: { color: colors.muted, fontSize: 12, marginBottom: 6, fontWeight: '600' },
+  title: { color: t.text, fontSize: 22, fontWeight: '800', marginBottom: 16 },
+  label: { color: t.muted, fontSize: 12, marginBottom: 6, fontWeight: '600' },
   picker: {
-    backgroundColor: colors.panel, borderWidth: 1, borderColor: colors.panelBorder, borderRadius: 10,
+    backgroundColor: t.panel, borderWidth: 1, borderColor: t.panelBorder, borderRadius: 12,
     paddingHorizontal: 14, paddingVertical: 12, marginBottom: 12,
   },
-  pickerText: { color: colors.text },
-  pickerPlaceholder: { color: colors.muted },
-  sectionTitle: { color: colors.text, fontWeight: '700', fontSize: 15, marginTop: 8, marginBottom: 10 },
+  pickerText: { color: t.text },
+  pickerPlaceholder: { color: t.muted },
+  sectionTitle: { color: t.text, fontWeight: '700', fontSize: 15, marginTop: 8, marginBottom: 10 },
   rowCard: { marginBottom: 10 },
-  availableText: { color: colors.muted, fontSize: 12, marginBottom: 10 },
-  errorText: { color: colors.danger, fontSize: 12, marginTop: -6, marginBottom: 8 },
-  removeText: { color: colors.danger, fontSize: 13, fontWeight: '600', marginTop: 4 },
-  addRowBtn: { alignItems: 'center', padding: 12, borderWidth: 1, borderColor: colors.panelBorder, borderRadius: 10, borderStyle: 'dashed', marginBottom: 8 },
-  addRowText: { color: colors.accent, fontWeight: '600' },
-  footer: { flexDirection: 'row', gap: 10, padding: 16, borderTopWidth: 1, borderTopColor: colors.panelBorder },
-  cancelBtn: { flex: 1, backgroundColor: colors.panel, borderWidth: 1, borderColor: colors.panelBorder, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
-  cancelBtnText: { color: colors.text, fontWeight: '600' },
-  saveBtn: { flex: 1, backgroundColor: colors.accent, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
-  saveBtnText: { color: '#fff', fontWeight: '700' },
+  availableText: { color: t.muted, fontSize: 12, marginBottom: 10 },
+  errorText: { color: t.danger, fontSize: 12, marginTop: -6, marginBottom: 8 },
+  removeText: { color: t.danger, fontSize: 13, fontWeight: '600', marginTop: 4 },
+  addRowBtn: { alignItems: 'center', padding: 12, borderWidth: 1, borderColor: t.panelBorder, borderRadius: 12, borderStyle: 'dashed', marginBottom: 8 },
+  addRowText: { color: t.accent, fontWeight: '600' },
+  footer: { flexDirection: 'row', gap: 10, padding: 16, borderTopWidth: 1, borderTopColor: t.panelBorder },
+  cancelBtn: { flex: 1, backgroundColor: t.panel, borderWidth: 1, borderColor: t.panelBorder, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
+  cancelBtnText: { color: t.text, fontWeight: '600' },
+  saveBtn: { flex: 1, backgroundColor: t.accent, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
+  saveBtnText: { color: t.onAccent, fontWeight: '700' },
 });

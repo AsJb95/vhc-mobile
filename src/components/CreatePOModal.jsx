@@ -3,7 +3,8 @@ import { Modal, View, Text, ScrollView, StyleSheet, Alert } from 'react-native';
 import { Screen, AnimatedPressable, Card } from './UI';
 import { FormField } from './FormField';
 import { useWarehouse } from '../context/WarehouseContext';
-import { formatCurrency, colors } from '../lib/format';
+import { useThemedStyles } from '../theme/useThemedStyles';
+import { formatCurrency } from '../lib/format';
 
 const ROW_FIELDS = { name: '', batch: '', expiry: '', qty: '', netRate: '', mrp: '', gst: '12', unitsPerPack: '10', hsnCode: '', stockist: '' };
 let rowSeq = 0;
@@ -11,6 +12,7 @@ const newRow = () => ({ ...ROW_FIELDS, _uid: `r${++rowSeq}` });
 
 export default function CreatePOModal({ visible, onClose }) {
   const { createPurchaseOrder } = useWarehouse();
+  const styles = useThemedStyles(makeStyles);
   const [supplier, setSupplier] = useState('');
   const [poDate, setPoDate] = useState(new Date().toISOString().slice(0, 10));
   const [expectedDelivery, setExpectedDelivery] = useState('');
@@ -120,26 +122,26 @@ export default function CreatePOModal({ visible, onClose }) {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (t) => StyleSheet.create({
   content: { padding: 16, paddingBottom: 32 },
-  title: { color: colors.text, fontSize: 22, fontWeight: '800', marginBottom: 16 },
+  title: { color: t.text, fontSize: 22, fontWeight: '800', marginBottom: 16 },
   row: { flexDirection: 'row', gap: 10 },
   half: { flex: 1 },
-  sectionTitle: { color: colors.text, fontWeight: '700', fontSize: 15, marginTop: 8, marginBottom: 10 },
+  sectionTitle: { color: t.text, fontWeight: '700', fontSize: 15, marginTop: 8, marginBottom: 10 },
   rowCard: { marginBottom: 10 },
   rowFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 },
-  amount: { color: colors.text, fontWeight: '700' },
-  removeText: { color: colors.danger, fontSize: 13, fontWeight: '600' },
-  addRowBtn: { alignItems: 'center', padding: 12, borderWidth: 1, borderColor: colors.panelBorder, borderRadius: 10, borderStyle: 'dashed', marginBottom: 8 },
-  addRowText: { color: colors.accent, fontWeight: '600' },
+  amount: { color: t.text, fontWeight: '700' },
+  removeText: { color: t.danger, fontSize: 13, fontWeight: '600' },
+  addRowBtn: { alignItems: 'center', padding: 12, borderWidth: 1, borderColor: t.panelBorder, borderRadius: 12, borderStyle: 'dashed', marginBottom: 8 },
+  addRowText: { color: t.accent, fontWeight: '600' },
   totalRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
-  totalLabel: { color: colors.muted, fontSize: 13 },
-  totalValue: { color: colors.text, fontSize: 13 },
-  grandLabel: { color: colors.text, fontWeight: '700' },
-  grandValue: { color: colors.text, fontWeight: '700' },
-  footer: { flexDirection: 'row', gap: 10, padding: 16, borderTopWidth: 1, borderTopColor: colors.panelBorder },
-  cancelBtn: { flex: 1, backgroundColor: colors.panel, borderWidth: 1, borderColor: colors.panelBorder, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
-  cancelBtnText: { color: colors.text, fontWeight: '600' },
-  saveBtn: { flex: 1, backgroundColor: colors.accent, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
-  saveBtnText: { color: '#fff', fontWeight: '700' },
+  totalLabel: { color: t.muted, fontSize: 13 },
+  totalValue: { color: t.text, fontSize: 13 },
+  grandLabel: { color: t.text, fontWeight: '700' },
+  grandValue: { color: t.text, fontWeight: '700' },
+  footer: { flexDirection: 'row', gap: 10, padding: 16, borderTopWidth: 1, borderTopColor: t.panelBorder },
+  cancelBtn: { flex: 1, backgroundColor: t.panel, borderWidth: 1, borderColor: t.panelBorder, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
+  cancelBtnText: { color: t.text, fontWeight: '600' },
+  saveBtn: { flex: 1, backgroundColor: t.accent, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
+  saveBtnText: { color: t.onAccent, fontWeight: '700' },
 });

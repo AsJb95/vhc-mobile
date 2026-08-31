@@ -4,13 +4,17 @@ import { useFocusEffect } from '@react-navigation/native';
 import { supabase } from '../lib/supabaseClient';
 import { useWarehouse } from '../context/WarehouseContext';
 import { usePharmacy } from '../context/PharmacyContext';
+import { useTheme } from '../context/ThemeContext';
+import { useThemedStyles } from '../theme/useThemedStyles';
 import { Card, Screen, AnimatedPressable } from '../components/UI';
 import { SectionTitle } from '../components/Bits';
-import { formatDateTime, colors } from '../lib/format';
+import { formatDateTime } from '../lib/format';
 
 // Operational status only. NEVER shows keys / tokens / credentials.
 function Line({ label, ok, detail }) {
-  const color = ok == null ? colors.muted : ok ? colors.success : colors.danger;
+  const { theme } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+  const color = ok == null ? theme.muted : ok ? theme.success : theme.danger;
   const dot = ok == null ? '•' : ok ? '●' : '●';
   return (
     <View style={styles.line}>
@@ -27,6 +31,8 @@ function Line({ label, ok, detail }) {
 export default function SystemHealthScreen() {
   const warehouse = useWarehouse();
   const pharmacy = usePharmacy();
+  const { theme } = useTheme();
+  const styles = useThemedStyles(makeStyles);
   const [db, setDb] = useState(null); // { ok, ms, error }
   const [rt, setRt] = useState(null); // realtime channel status string
   const [refreshing, setRefreshing] = useState(false);
@@ -63,7 +69,7 @@ export default function SystemHealthScreen() {
     <Screen>
       <ScrollView
         contentContainerStyle={styles.content}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.accent} />}
       >
         <Card style={styles.card}>
           <SectionTitle>Connectivity</SectionTitle>
@@ -108,17 +114,17 @@ export default function SystemHealthScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (t) => StyleSheet.create({
   content: { padding: 16, paddingBottom: 40 },
   card: { marginBottom: 12 },
-  line: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8, borderTopWidth: 1, borderTopColor: colors.panelBorder },
+  line: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8, borderTopWidth: 1, borderTopColor: t.panelBorder },
   dot: { fontSize: 14 },
-  lineLabel: { color: colors.text, fontSize: 14, fontWeight: '600' },
-  lineDetail: { color: colors.muted, fontSize: 11, marginTop: 2 },
+  lineLabel: { color: t.text, fontSize: 14, fontWeight: '600' },
+  lineDetail: { color: t.muted, fontSize: 11, marginTop: 2 },
   lineState: { fontSize: 12, fontWeight: '800' },
-  warn: { color: colors.warning, fontSize: 11, marginTop: 8 },
-  errText: { color: colors.danger, fontSize: 12, marginTop: 4 },
-  btn: { backgroundColor: colors.accent, borderRadius: 12, paddingVertical: 14, alignItems: 'center', marginTop: 4 },
-  btnText: { color: '#fff', fontWeight: '700' },
-  note: { color: colors.muted, fontSize: 11, textAlign: 'center', marginTop: 12, fontStyle: 'italic' },
+  warn: { color: t.warning, fontSize: 11, marginTop: 8 },
+  errText: { color: t.danger, fontSize: 12, marginTop: 4 },
+  btn: { backgroundColor: t.accent, borderRadius: 12, paddingVertical: 14, alignItems: 'center', marginTop: 4 },
+  btnText: { color: t.onAccent, fontWeight: '700' },
+  note: { color: t.muted, fontSize: 11, textAlign: 'center', marginTop: 12, fontStyle: 'italic' },
 });

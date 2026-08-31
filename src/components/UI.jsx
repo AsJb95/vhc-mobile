@@ -3,9 +3,11 @@ import { View, Text, StyleSheet, ActivityIndicator, Pressable, Animated } from '
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MotiView } from 'moti';
 import { LinearGradient } from 'expo-linear-gradient';
-import { colors } from '../lib/format';
+import { useTheme } from '../context/ThemeContext';
+import { useThemedStyles } from '../theme/useThemedStyles';
 
 export function Screen({ children, style }) {
+  const styles = useThemedStyles(makeStyles);
   return (
     <SafeAreaView edges={['top']} style={[styles.screen, style]}>
       {children}
@@ -14,6 +16,7 @@ export function Screen({ children, style }) {
 }
 
 export function Card({ children, style, index = 0 }) {
+  const styles = useThemedStyles(makeStyles);
   return (
     <MotiView
       from={{ opacity: 0, translateY: 12 }}
@@ -26,16 +29,22 @@ export function Card({ children, style, index = 0 }) {
   );
 }
 
-export function Badge({ label, color = colors.muted }) {
+export function Badge({ label, color }) {
+  const { theme } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+  const c = color || theme.muted;
   return (
-    <View style={[styles.badge, { backgroundColor: `${color}22`, borderColor: `${color}55` }]}>
-      <View style={[styles.badgeDot, { backgroundColor: color }]} />
-      <Text style={[styles.badgeText, { color }]}>{label}</Text>
+    <View style={[styles.badge, { backgroundColor: `${c}22`, borderColor: `${c}55` }]}>
+      <View style={[styles.badgeDot, { backgroundColor: c }]} />
+      <Text style={[styles.badgeText, { color: c }]}>{label}</Text>
     </View>
   );
 }
 
-export function StatCard({ label, value, sub, color = colors.accent, index = 0 }) {
+export function StatCard({ label, value, sub, color, index = 0 }) {
+  const { theme } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+  const c = color || theme.accent;
   return (
     <MotiView
       from={{ opacity: 0, scale: 0.92 }}
@@ -44,12 +53,12 @@ export function StatCard({ label, value, sub, color = colors.accent, index = 0 }
       style={styles.statCard}
     >
       <LinearGradient
-        colors={[`${color}29`, `${color}0a`]}
+        colors={[`${c}29`, `${c}0a`]}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
-        style={[styles.statGradient, { borderColor: `${color}40` }]}
+        style={[styles.statGradient, { borderColor: `${c}40` }]}
       >
-        <View style={[styles.statDot, { backgroundColor: color }]} />
+        <View style={[styles.statDot, { backgroundColor: c }]} />
         <Text style={styles.statLabel}>{label}</Text>
         <Text style={styles.statValue}>{value}</Text>
         {sub ? <Text style={styles.statSub}>{sub}</Text> : null}
@@ -78,6 +87,7 @@ export function AnimatedPressable({ onPress, style, children, disabled }) {
 }
 
 export function EmptyState({ text, icon }) {
+  const styles = useThemedStyles(makeStyles);
   return (
     <MotiView from={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ type: 'timing', duration: 300 }} style={styles.empty}>
       {icon ? <Text style={styles.emptyIcon}>{icon}</Text> : null}
@@ -87,29 +97,31 @@ export function EmptyState({ text, icon }) {
 }
 
 export function ScreenLoading() {
+  const { theme } = useTheme();
+  const styles = useThemedStyles(makeStyles);
   return (
     <View style={styles.loading}>
-      <ActivityIndicator color={colors.accent} size="large" />
+      <ActivityIndicator color={theme.accent} size="large" />
     </View>
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (t) => StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: colors.bg,
+    backgroundColor: t.bg,
   },
   card: {
-    backgroundColor: colors.panel,
-    borderRadius: 18,
+    backgroundColor: t.card,
+    borderRadius: 20,
     borderWidth: 1,
-    borderColor: colors.panelBorder,
+    borderColor: t.panelBorder,
     padding: 16,
-    shadowColor: '#000',
+    shadowColor: t.shadow,
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 10,
-    elevation: 3,
+    shadowOpacity: 0.16,
+    shadowRadius: 12,
+    elevation: 2,
   },
   badge: {
     flexDirection: 'row',
@@ -132,25 +144,25 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   statGradient: {
-    borderRadius: 18,
+    borderRadius: 20,
     borderWidth: 1,
     padding: 16,
   },
   statDot: { width: 8, height: 8, borderRadius: 4, marginBottom: 10 },
   statLabel: {
-    color: colors.muted,
+    color: t.muted,
     fontSize: 12,
     marginBottom: 6,
     fontWeight: '500',
   },
   statValue: {
-    color: colors.text,
+    color: t.text,
     fontSize: 22,
     fontWeight: '800',
     letterSpacing: -0.3,
   },
   statSub: {
-    color: colors.muted,
+    color: t.muted,
     fontSize: 11,
     marginTop: 5,
   },
@@ -160,12 +172,12 @@ const styles = StyleSheet.create({
   },
   emptyIcon: { fontSize: 32, marginBottom: 10 },
   emptyText: {
-    color: colors.muted,
+    color: t.muted,
   },
   loading: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.bg,
+    backgroundColor: t.bg,
   },
 });

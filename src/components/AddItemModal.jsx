@@ -3,7 +3,7 @@ import { Modal, View, Text, ScrollView, StyleSheet, Alert } from 'react-native';
 import { Screen, AnimatedPressable } from './UI';
 import { FormField } from './FormField';
 import { useWarehouse } from '../context/WarehouseContext';
-import { colors } from '../lib/format';
+import { useThemedStyles } from '../theme/useThemedStyles';
 
 const BLANK = { name: '', batch: '', expiry: '', netRate: '', mrp: '', gst: '12', stock: '', unitsPerPack: '10', category: '', hsnCode: '', stockist: '', correctionReason: '' };
 
@@ -24,6 +24,7 @@ export default function AddItemModal({ visible, item, onClose, target = 'main' }
     addMainItem, updateMainItem, deleteMainItem,
     addPharmacyItem, updatePharmacyItem, deletePharmacyItem,
   } = useWarehouse();
+  const styles = useThemedStyles(makeStyles);
   const [form, setForm] = useState(() => (item ? { ...BLANK, ...item, correctionReason: '' } : { ...BLANK }));
   const [saving, setSaving] = useState(false);
 
@@ -165,16 +166,16 @@ export default function AddItemModal({ visible, item, onClose, target = 'main' }
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (t) => StyleSheet.create({
   content: { padding: 16, paddingBottom: 32 },
-  title: { color: colors.text, fontSize: 22, fontWeight: '800', marginBottom: 16 },
+  title: { color: t.text, fontSize: 22, fontWeight: '800', marginBottom: 16 },
   row: { flexDirection: 'row', gap: 10 },
   half: { flex: 1 },
   deleteBtn: { marginTop: 8, alignItems: 'center', padding: 12 },
-  deleteBtnText: { color: colors.danger, fontWeight: '600' },
-  footer: { flexDirection: 'row', gap: 10, padding: 16, borderTopWidth: 1, borderTopColor: colors.panelBorder },
-  cancelBtn: { flex: 1, backgroundColor: colors.panel, borderWidth: 1, borderColor: colors.panelBorder, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
-  cancelBtnText: { color: colors.text, fontWeight: '600' },
-  saveBtn: { flex: 1, backgroundColor: colors.accent, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
-  saveBtnText: { color: '#fff', fontWeight: '700' },
+  deleteBtnText: { color: t.danger, fontWeight: '600' },
+  footer: { flexDirection: 'row', gap: 10, padding: 16, borderTopWidth: 1, borderTopColor: t.panelBorder },
+  cancelBtn: { flex: 1, backgroundColor: t.panel, borderWidth: 1, borderColor: t.panelBorder, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
+  cancelBtnText: { color: t.text, fontWeight: '600' },
+  saveBtn: { flex: 1, backgroundColor: t.accent, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
+  saveBtnText: { color: t.onAccent, fontWeight: '700' },
 });

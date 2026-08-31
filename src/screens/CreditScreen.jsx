@@ -3,14 +3,18 @@ import { View, Text, FlatList, TextInput, StyleSheet, RefreshControl } from 'rea
 import { useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '../context/AuthContext';
 import { usePharmacy } from '../context/PharmacyContext';
+import { useTheme } from '../context/ThemeContext';
+import { useThemedStyles } from '../theme/useThemedStyles';
 import { Card, Screen, EmptyState, ScreenLoading } from '../components/UI';
 import { KeyVal } from '../components/Bits';
-import { formatCurrency, formatDate, colors } from '../lib/format';
+import { formatCurrency, formatDate } from '../lib/format';
 import { creditBills } from '../lib/pharmacyReports';
 
 export default function CreditScreen() {
   const { role } = useAuth();
   const { fetchCreditBills } = usePharmacy();
+  const { theme } = useTheme();
+  const styles = useThemedStyles(makeStyles);
   const [state, setState] = useState({ loading: true, error: null, bills: [] });
   const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState('');
@@ -46,7 +50,7 @@ export default function CreditScreen() {
     <Screen>
       <View style={styles.header}>
         <Card style={styles.summaryCard}>
-          <KeyVal label="Total billed as Credit" value={formatCurrency(summary.total)} strong color={colors.warning} />
+          <KeyVal label="Total billed as Credit" value={formatCurrency(summary.total)} strong color={theme.warning} />
           <KeyVal label="Credit bills" value={summary.count} />
           <Text style={styles.caveat}>
             This is <Text style={styles.bold}>outstanding credit billed</Text>, not a repayment ledger. The
@@ -58,7 +62,7 @@ export default function CreditScreen() {
         <TextInput
           style={styles.search}
           placeholder="Search patient or bill #…"
-          placeholderTextColor={colors.muted}
+          placeholderTextColor={theme.muted}
           value={search}
           onChangeText={setSearch}
         />
@@ -68,7 +72,7 @@ export default function CreditScreen() {
         data={filtered}
         keyExtractor={(b) => b.id}
         contentContainerStyle={styles.list}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.accent} />}
         ListEmptyComponent={<EmptyState text="No Credit-mode bills" icon="💳" />}
         renderItem={({ item, index }) => (
           <Card index={index} style={styles.card}>
@@ -84,20 +88,20 @@ export default function CreditScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (t) => StyleSheet.create({
   header: { padding: 16, paddingBottom: 6 },
   summaryCard: { marginBottom: 12 },
-  caveat: { color: colors.muted, fontSize: 11, marginTop: 10, lineHeight: 16 },
-  bold: { fontWeight: '800', color: colors.text },
-  err: { color: colors.danger, fontSize: 12, marginBottom: 8 },
+  caveat: { color: t.muted, fontSize: 11, marginTop: 10, lineHeight: 16 },
+  bold: { fontWeight: '800', color: t.text },
+  err: { color: t.danger, fontSize: 12, marginBottom: 8 },
   search: {
-    backgroundColor: colors.panel, borderWidth: 1, borderColor: colors.panelBorder, borderRadius: 10,
-    color: colors.text, paddingHorizontal: 14, paddingVertical: 10,
+    backgroundColor: t.panel, borderWidth: 1, borderColor: t.panelBorder, borderRadius: 12,
+    color: t.text, paddingHorizontal: 14, paddingVertical: 10,
   },
   list: { padding: 16, paddingTop: 8, paddingBottom: 32 },
   card: { marginBottom: 10 },
   rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
-  patient: { color: colors.text, fontWeight: '700', fontSize: 15, flex: 1, marginRight: 8 },
-  amount: { color: colors.warning, fontWeight: '800' },
-  meta: { color: colors.muted, fontSize: 12 },
+  patient: { color: t.text, fontWeight: '700', fontSize: 15, flex: 1, marginRight: 8 },
+  amount: { color: t.warning, fontWeight: '800' },
+  meta: { color: t.muted, fontSize: 12 },
 });

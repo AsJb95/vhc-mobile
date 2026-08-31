@@ -4,11 +4,14 @@ import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MotiView, MotiText } from 'moti';
 import { useAuth } from '../context/AuthContext';
+import { useTheme } from '../context/ThemeContext';
+import { useThemedStyles } from '../theme/useThemedStyles';
 import { AnimatedPressable } from '../components/UI';
-import { colors } from '../lib/format';
 
 export default function LoginScreen() {
   const { signIn } = useAuth();
+  const { theme, isDark } = useTheme();
+  const styles = useThemedStyles(makeStyles);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -23,9 +26,9 @@ export default function LoginScreen() {
   }
 
   return (
-    <LinearGradient colors={['#0a0f1e', '#111a2e', '#0a0f1e']} style={styles.gradient}>
+    <LinearGradient colors={[theme.bg, theme.panel, theme.bg]} style={styles.gradient}>
       <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <StatusBar style="light" />
+        <StatusBar style={isDark ? 'light' : 'dark'} />
 
         <MotiView
           from={{ opacity: 0, scale: 0.85 }}
@@ -65,7 +68,7 @@ export default function LoginScreen() {
           <TextInput
             style={styles.input}
             placeholder="Email"
-            placeholderTextColor={colors.muted}
+            placeholderTextColor={theme.muted}
             autoCapitalize="none"
             keyboardType="email-address"
             value={email}
@@ -74,7 +77,7 @@ export default function LoginScreen() {
           <TextInput
             style={styles.input}
             placeholder="Password"
-            placeholderTextColor={colors.muted}
+            placeholderTextColor={theme.muted}
             secureTextEntry
             value={password}
             onChangeText={setPassword}
@@ -89,7 +92,7 @@ export default function LoginScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (t) => StyleSheet.create({
   gradient: { flex: 1 },
   container: {
     flex: 1,
@@ -99,38 +102,38 @@ const styles = StyleSheet.create({
   },
   logoCircle: {
     width: 84, height: 84, borderRadius: 42,
-    backgroundColor: `${colors.accent}22`,
-    borderWidth: 1, borderColor: `${colors.accent}55`,
+    backgroundColor: `${t.accent}22`,
+    borderWidth: 1, borderColor: `${t.accent}55`,
     alignItems: 'center', justifyContent: 'center',
     marginBottom: 16,
   },
   emoji: { fontSize: 40 },
-  title: { color: colors.text, fontSize: 26, fontWeight: '800', letterSpacing: -0.5 },
-  subtitle: { color: colors.muted, fontSize: 13, marginBottom: 28, marginTop: 4 },
-  error: { color: colors.danger, marginBottom: 12, textAlign: 'center' },
+  title: { color: t.text, fontSize: 26, fontWeight: '800', letterSpacing: -0.5 },
+  subtitle: { color: t.muted, fontSize: 13, marginBottom: 28, marginTop: 4 },
+  error: { color: t.danger, marginBottom: 12, textAlign: 'center' },
   input: {
     width: '100%',
-    backgroundColor: colors.panel,
+    backgroundColor: t.panel,
     borderWidth: 1,
-    borderColor: colors.panelBorder,
+    borderColor: t.panelBorder,
     borderRadius: 12,
-    color: colors.text,
+    color: t.text,
     paddingHorizontal: 16,
     paddingVertical: 14,
     marginBottom: 12,
   },
   button: {
     width: '100%',
-    backgroundColor: colors.accent,
+    backgroundColor: t.accent,
     borderRadius: 12,
     paddingVertical: 15,
     alignItems: 'center',
     marginTop: 8,
-    shadowColor: colors.accent,
+    shadowColor: t.accent,
     shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.35,
     shadowRadius: 12,
     elevation: 4,
   },
-  buttonText: { color: '#fff', fontWeight: '700', fontSize: 15 },
+  buttonText: { color: t.onAccent, fontWeight: '700', fontSize: 15 },
 });

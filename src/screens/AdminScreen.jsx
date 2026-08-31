@@ -1,16 +1,18 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import { View, Text, FlatList, StyleSheet, RefreshControl, Modal, ScrollView, ActivityIndicator } from 'react-native';
 import { useAuth } from '../context/AuthContext';
+import { useTheme } from '../context/ThemeContext';
+import { useThemedStyles } from '../theme/useThemedStyles';
 import { Card, Badge, EmptyState, Screen, AnimatedPressable } from '../components/UI';
 import BackupManagerScreen from './BackupManagerScreen';
 import { listDriveBackups, getDriveBackupContent } from '../lib/adminApi';
-import { formatBytes, formatDateTime, colors } from '../lib/format';
+import { formatBytes, formatDateTime } from '../lib/format';
 
-const APP_META = {
-  warehouse: { label: 'Warehouse', color: colors.accent },
-  pharmacy: { label: 'Pharmacy', color: colors.purple },
-  other: { label: 'Other', color: colors.muted },
-};
+const appMeta = (t) => ({
+  warehouse: { label: 'Warehouse', color: t.accent },
+  pharmacy: { label: 'Pharmacy', color: t.purple },
+  other: { label: 'Other', color: t.muted },
+});
 
 const FILTERS = [
   { key: 'all', label: 'All' },
@@ -29,6 +31,9 @@ function summarize(obj) {
 
 export default function AdminScreen() {
   const { session } = useAuth();
+  const { theme } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+  const APP_META = useMemo(() => appMeta(theme), [theme]);
   const accessToken = session?.access_token;
   const [backups, setBackups] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -98,7 +103,7 @@ export default function AdminScreen() {
       </View>
 
       {loading ? (
-        <View style={styles.loading}><ActivityIndicator color={colors.accent} size="large" /></View>
+        <View style={styles.loading}><ActivityIndicator color={theme.accent} size="large" /></View>
       ) : error ? (
         <EmptyState text={`Failed to load: ${error}`} icon="⚠️" />
       ) : (
@@ -106,7 +111,7 @@ export default function AdminScreen() {
           data={filtered}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.list}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.accent} />}
           ListEmptyComponent={<EmptyState text="No backups found" icon="🗄️" />}
           renderItem={({ item, index }) => {
             const meta = APP_META[item.app] || APP_META.other;
@@ -132,7 +137,7 @@ export default function AdminScreen() {
             <Text style={styles.modalTitle}>{viewing?.name}</Text>
             {viewing ? <Text style={styles.itemMeta}>{formatDateTime(viewing.modifiedAt)} · {formatBytes(viewing.size)}</Text> : null}
 
-            {contentLoading && <ActivityIndicator color={colors.accent} style={{ marginTop: 24 }} />}
+            {contentLoading && <ActivityIndicator color={theme.accent} style={{ marginTop: 24 }} />}
 
             {!contentLoading && content?.error && (
               <Text style={styles.errorText}>Failed to load: {content.error}</Text>
@@ -190,34 +195,34 @@ export default function AdminScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (t) => StyleSheet.create({
   header: { padding: 16, paddingBottom: 8 },
-  title: { color: colors.text, fontSize: 26, fontWeight: '800', letterSpacing: -0.4 },
-  subtitle: { color: colors.muted, fontSize: 12, marginTop: 4, marginBottom: 12 },
-  managerBtn: { backgroundColor: colors.accent, borderRadius: 10, paddingVertical: 10, alignItems: 'center', marginBottom: 12 },
-  managerBtnText: { color: '#fff', fontWeight: '700', fontSize: 13 },
+  title: { color: t.text, fontSize: 26, fontWeight: '800', letterSpacing: -0.4 },
+  subtitle: { color: t.muted, fontSize: 12, marginTop: 4, marginBottom: 12 },
+  managerBtn: { backgroundColor: t.accent, borderRadius: 12, paddingVertical: 10, alignItems: 'center', marginBottom: 12 },
+  managerBtnText: { color: t.onAccent, fontWeight: '700', fontSize: 13 },
   tabRow: { flexDirection: 'row', gap: 6 },
-  tabBtn: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, backgroundColor: colors.panel, borderWidth: 1, borderColor: colors.panelBorder },
-  tabBtnActive: { backgroundColor: colors.accent, borderColor: colors.accent },
-  tabText: { color: colors.muted, fontSize: 12 },
-  tabTextActive: { color: '#fff', fontWeight: '600' },
+  tabBtn: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, backgroundColor: t.chip, borderWidth: 1, borderColor: t.panelBorder },
+  tabBtnActive: { backgroundColor: t.accent, borderColor: t.accent },
+  tabText: { color: t.muted, fontSize: 12 },
+  tabTextActive: { color: t.onAccent, fontWeight: '600' },
   loading: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   list: { padding: 16, paddingTop: 8, paddingBottom: 32 },
   itemCard: { marginBottom: 10 },
   itemRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 6 },
-  itemName: { color: colors.text, fontWeight: '600', fontSize: 14, flex: 1 },
-  itemMeta: { color: colors.muted, fontSize: 12 },
-  encryptedNote: { color: colors.warning, fontSize: 11, marginTop: 6 },
+  itemName: { color: t.text, fontWeight: '600', fontSize: 14, flex: 1 },
+  itemMeta: { color: t.muted, fontSize: 12 },
+  encryptedNote: { color: t.warning, fontSize: 11, marginTop: 6 },
   modalContent: { padding: 16, paddingBottom: 32 },
-  modalTitle: { color: colors.text, fontSize: 18, fontWeight: '800', marginBottom: 4 },
-  errorText: { color: colors.danger, marginTop: 16 },
-  sectionTitle: { color: colors.text, fontWeight: '700', fontSize: 15, marginTop: 16, marginBottom: 10 },
+  modalTitle: { color: t.text, fontSize: 18, fontWeight: '800', marginBottom: 4 },
+  errorText: { color: t.danger, marginTop: 16 },
+  sectionTitle: { color: t.text, fontWeight: '700', fontSize: 15, marginTop: 16, marginBottom: 10 },
   summaryRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8, paddingVertical: 10 },
-  summaryKey: { color: colors.muted, fontSize: 13 },
-  summaryValue: { color: colors.text, fontSize: 13, fontWeight: '600' },
+  summaryKey: { color: t.muted, fontSize: 13 },
+  summaryValue: { color: t.text, fontSize: 13, fontWeight: '600' },
   rawBtn: { marginTop: 12, alignItems: 'center', padding: 10 },
-  rawBtnText: { color: colors.accent, fontWeight: '600' },
-  rawText: { color: colors.text, fontSize: 11, fontFamily: 'monospace' },
-  closeBtn: { padding: 16, alignItems: 'center', borderTopWidth: 1, borderTopColor: colors.panelBorder },
-  closeBtnText: { color: colors.accent, fontWeight: '600' },
+  rawBtnText: { color: t.accent, fontWeight: '600' },
+  rawText: { color: t.text, fontSize: 11, fontFamily: 'monospace' },
+  closeBtn: { padding: 16, alignItems: 'center', borderTopWidth: 1, borderTopColor: t.panelBorder },
+  closeBtnText: { color: t.accent, fontWeight: '600' },
 });

@@ -3,10 +3,12 @@ import { ScrollView, View, Text, StyleSheet, RefreshControl, ActivityIndicator }
 import { useFocusEffect } from '@react-navigation/native';
 import { useWarehouse } from '../context/WarehouseContext';
 import { usePharmacy } from '../context/PharmacyContext';
+import { useTheme } from '../context/ThemeContext';
+import { useThemedStyles } from '../theme/useThemedStyles';
 import { Card, Screen, ScreenLoading } from '../components/UI';
 import { FormField } from '../components/FormField';
 import { KeyVal, SectionTitle, ChipTabs, AsOf } from '../components/Bits';
-import { formatCurrency, formatDate, colors } from '../lib/format';
+import { formatCurrency, formatDate } from '../lib/format';
 import {
   REPORT_PERIODS, periodRange, filterSalesByRange, summarizeSales, buildCostLookup, compareSummaries, PAYMENT_BUCKETS,
 } from '../lib/pharmacyReports';
@@ -16,6 +18,8 @@ const ISO = /^\d{4}-\d{2}-\d{2}$/;
 export default function SalesReportsScreen() {
   const { pharmacyStock } = useWarehouse();
   const { recentSales, asOf, loading, refreshing, refresh, fetchSalesRange, loadError } = usePharmacy();
+  const { theme } = useTheme();
+  const styles = useThemedStyles(makeStyles);
 
   const [period, setPeriod] = useState('today');
   const [customDay, setCustomDay] = useState('');
@@ -110,7 +114,7 @@ export default function SalesReportsScreen() {
     <Screen>
       <ScrollView
         contentContainerStyle={styles.content}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={colors.accent} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={theme.accent} />}
       >
         <AsOf at={asOf} />
         {loadError ? <Text style={styles.error}>Live data unavailable — {loadError}</Text> : null}
@@ -132,11 +136,11 @@ export default function SalesReportsScreen() {
         {!range ? (
           <Card style={styles.card}><Text style={styles.muted}>Enter a valid date to run the report.</Text></Card>
         ) : busy ? (
-          <View style={{ paddingVertical: 40 }}><ActivityIndicator color={colors.accent} /></View>
+          <View style={{ paddingVertical: 40 }}><ActivityIndicator color={theme.accent} /></View>
         ) : rangeResult?.error ? (
           <Card style={styles.card}><Text style={styles.error}>Could not load this range — {rangeResult.error}</Text></Card>
         ) : summary == null ? (
-          <View style={{ paddingVertical: 40 }}><ActivityIndicator color={colors.accent} /></View>
+          <View style={{ paddingVertical: 40 }}><ActivityIndicator color={theme.accent} /></View>
         ) : (
           <>
             <Text style={styles.periodLabel}>
@@ -166,7 +170,7 @@ export default function SalesReportsScreen() {
                     label="Est. gross profit"
                     value={formatCurrency(summary.estimatedProfit)}
                     strong
-                    color={summary.estimatedProfit >= 0 ? colors.success : colors.danger}
+                    color={summary.estimatedProfit >= 0 ? theme.success : theme.danger}
                   />
                   <KeyVal label="Pre-tax revenue (subtotal)" value={formatCurrency(summary.totalSubtotal)} />
                   <KeyVal label="Cost of goods sold" value={formatCurrency(summary.costTotal)} />
@@ -211,9 +215,11 @@ export default function SalesReportsScreen() {
 }
 
 function CmpRow({ label, c, fmt }) {
+  const { theme } = useTheme();
+  const styles = useThemedStyles(makeStyles);
   const up = c.delta > 0;
   const flat = c.delta === 0;
-  const color = flat ? colors.muted : up ? colors.success : colors.danger;
+  const color = flat ? theme.muted : up ? theme.success : theme.danger;
   const arrow = flat ? '→' : up ? '▲' : '▼';
   const pct = c.pct == null ? '' : ` (${up ? '+' : ''}${c.pct.toFixed(1)}%)`;
   return (
@@ -228,18 +234,18 @@ function CmpRow({ label, c, fmt }) {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (t) => StyleSheet.create({
   content: { padding: 16, paddingBottom: 40 },
-  error: { color: colors.danger, fontSize: 12, marginBottom: 10 },
-  muted: { color: colors.muted, fontSize: 13 },
-  hint: { color: colors.muted, fontSize: 11, marginTop: 8, fontStyle: 'italic' },
+  error: { color: t.danger, fontSize: 12, marginBottom: 10 },
+  muted: { color: t.muted, fontSize: 13 },
+  hint: { color: t.muted, fontSize: 11, marginTop: 8, fontStyle: 'italic' },
   card: { marginBottom: 12 },
   row: { flexDirection: 'row', gap: 10, marginTop: 12 },
   half: { flex: 1 },
-  periodLabel: { color: colors.text, fontSize: 13, fontWeight: '700', marginTop: 14, marginBottom: 8 },
-  cmpRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', paddingVertical: 8, borderTopWidth: 1, borderTopColor: colors.panelBorder },
-  cmpLabel: { color: colors.text, fontSize: 14, fontWeight: '600' },
-  cmpNow: { color: colors.text, fontSize: 15, fontWeight: '800' },
+  periodLabel: { color: t.text, fontSize: 13, fontWeight: '700', marginTop: 14, marginBottom: 8 },
+  cmpRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', paddingVertical: 8, borderTopWidth: 1, borderTopColor: t.panelBorder },
+  cmpLabel: { color: t.text, fontSize: 14, fontWeight: '600' },
+  cmpNow: { color: t.text, fontSize: 15, fontWeight: '800' },
   cmpDelta: { fontSize: 12, fontWeight: '700', marginTop: 2 },
-  cmpPrev: { color: colors.muted, fontSize: 11, marginTop: 2 },
+  cmpPrev: { color: t.muted, fontSize: 11, marginTop: 2 },
 });

@@ -1,9 +1,11 @@
 import { useMemo, useState } from 'react';
 import { View, Text, FlatList, StyleSheet, RefreshControl } from 'react-native';
 import { useWarehouse } from '../context/WarehouseContext';
+import { useTheme } from '../context/ThemeContext';
+import { useThemedStyles } from '../theme/useThemedStyles';
 import { Card, Badge, EmptyState, ScreenLoading, StatCard, AnimatedPressable, Screen } from '../components/UI';
 import { ChipTabs } from '../components/Bits';
-import { formatCurrency, formatDate, daysUntil, colors } from '../lib/format';
+import { formatCurrency, formatDate, daysUntil } from '../lib/format';
 import { classifyPharmacyStock, PHARMACY_LOW_UNITS, PHARMACY_LOW_STRIPS } from '../lib/pharmacyStock';
 
 const FILTERS = [
@@ -15,16 +17,19 @@ const FILTERS = [
   { key: 'expiring', label: 'Expiring' },
 ];
 
-const TYPE_META = {
-  expired: { label: 'Expired', color: colors.danger },
-  out: { label: 'Out of Stock', color: colors.danger },
-  critical: { label: 'Critical', color: colors.danger },
-  low: { label: 'Low Stock', color: colors.warning },
-  expiring: { label: 'Expiring Soon', color: colors.accent },
-};
+const typeMeta = (t) => ({
+  expired: { label: 'Expired', color: t.danger },
+  out: { label: 'Out of Stock', color: t.danger },
+  critical: { label: 'Critical', color: t.danger },
+  low: { label: 'Low Stock', color: t.warning },
+  expiring: { label: 'Expiring Soon', color: t.accent },
+});
 
 export default function AlertsScreen() {
   const { getAlerts, mainStock, pharmacyStock, settings, loading, refreshing, refresh } = useWarehouse();
+  const { theme } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+  const TYPE_META = useMemo(() => typeMeta(theme), [theme]);
   const [domain, setDomain] = useState('warehouse');
   const [filter, setFilter] = useState('all');
 
@@ -71,12 +76,12 @@ export default function AlertsScreen() {
             : `Low: ≤${PHARMACY_LOW_UNITS} units / ≤${PHARMACY_LOW_STRIPS} strips · Critical: half that · Expiry: ${settings.expiryAlertDays} days`}
         </Text>
         <View style={styles.statGrid}>
-          <StatCard index={0} label="Expired" value={buckets.expired.length} color={colors.danger} />
-          <StatCard index={1} label="Out of Stock" value={buckets.out.length} color={colors.danger} />
+          <StatCard index={0} label="Expired" value={buckets.expired.length} color={theme.danger} />
+          <StatCard index={1} label="Out of Stock" value={buckets.out.length} color={theme.danger} />
           {domain === 'pharmacy'
-            ? <StatCard index={2} label="Critical" value={buckets.critical.length} color={colors.danger} />
-            : <StatCard index={2} label="Low Stock" value={buckets.low.length} color={colors.warning} />}
-          <StatCard index={3} label="Expiring Soon" value={buckets.expiring.length} color={colors.accent} />
+            ? <StatCard index={2} label="Critical" value={buckets.critical.length} color={theme.danger} />
+            : <StatCard index={2} label="Low Stock" value={buckets.low.length} color={theme.warning} />}
+          <StatCard index={3} label="Expiring Soon" value={buckets.expiring.length} color={theme.accent} />
         </View>
         <ChipTabs
           options={domain === 'warehouse' ? FILTERS.filter((f) => f.key !== 'critical') : FILTERS}
@@ -89,7 +94,7 @@ export default function AlertsScreen() {
         data={rows}
         keyExtractor={(row, idx) => `${domain}-${row.type}-${row.item.id}-${idx}`}
         contentContainerStyle={styles.list}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={colors.accent} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={theme.accent} />}
         ListEmptyComponent={<EmptyState text="No alerts in this category" icon="🔔" />}
         renderItem={({ item: row, index }) => {
           const meta = TYPE_META[row.type];
@@ -116,19 +121,19 @@ export default function AlertsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (t) => StyleSheet.create({
   header: { padding: 16, paddingBottom: 8 },
-  title: { color: colors.text, fontSize: 26, fontWeight: '800', letterSpacing: -0.4, marginBottom: 10 },
-  segmented: { flexDirection: 'row', backgroundColor: colors.panel, borderRadius: 10, borderWidth: 1, borderColor: colors.panelBorder, padding: 4, marginBottom: 8 },
+  title: { color: t.text, fontSize: 26, fontWeight: '800', letterSpacing: -0.4, marginBottom: 10 },
+  segmented: { flexDirection: 'row', backgroundColor: t.chip, borderRadius: 12, borderWidth: 1, borderColor: t.panelBorder, padding: 4, marginBottom: 8 },
   seg: { flex: 1, paddingVertical: 8, borderRadius: 8, alignItems: 'center' },
-  segActive: { backgroundColor: colors.accent },
-  segText: { color: colors.muted, fontSize: 13 },
-  segTextActive: { color: '#fff', fontWeight: '700' },
-  subtitle: { color: colors.muted, fontSize: 11, marginBottom: 12 },
+  segActive: { backgroundColor: t.accent },
+  segText: { color: t.muted, fontSize: 13 },
+  segTextActive: { color: t.onAccent, fontWeight: '700' },
+  subtitle: { color: t.muted, fontSize: 11, marginBottom: 12 },
   statGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
   list: { padding: 16, paddingTop: 8, paddingBottom: 32 },
   itemCard: { marginBottom: 10 },
   itemRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
-  itemName: { color: colors.text, fontWeight: '600', fontSize: 15, flex: 1, marginRight: 8 },
-  itemMeta: { color: colors.muted, fontSize: 12, marginTop: 2 },
+  itemName: { color: t.text, fontWeight: '600', fontSize: 15, flex: 1, marginRight: 8 },
+  itemMeta: { color: t.muted, fontSize: 12, marginTop: 2 },
 });

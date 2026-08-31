@@ -2,9 +2,11 @@ import { useMemo, useState } from 'react';
 import { View, Text, FlatList, TextInput, StyleSheet, RefreshControl } from 'react-native';
 import { useWarehouse } from '../context/WarehouseContext';
 import { usePharmacy } from '../context/PharmacyContext';
+import { useTheme } from '../context/ThemeContext';
+import { useThemedStyles } from '../theme/useThemedStyles';
 import { Card, Badge, Screen, ScreenLoading, EmptyState } from '../components/UI';
 import { ChipTabs, AsOf } from '../components/Bits';
-import { formatCurrency, formatDate, daysUntil, colors } from '../lib/format';
+import { formatCurrency, formatDate, daysUntil } from '../lib/format';
 import { topSelling, slowMoving, deadStock } from '../lib/pharmacyReports';
 import { classifyPharmacyStock, pharmacyStockStatus } from '../lib/pharmacyStock';
 
@@ -26,6 +28,8 @@ function windowSales(sales, days) {
 export default function InventoryIntelligenceScreen() {
   const { pharmacyStock, settings, loading: whLoading } = useWarehouse();
   const { recentSales, asOf, loading: phLoading, refreshing, refresh, loadError } = usePharmacy();
+  const { theme } = useTheme();
+  const styles = useThemedStyles(makeStyles);
   const [tab, setTab] = useState('top');
   const [search, setSearch] = useState('');
 
@@ -60,7 +64,7 @@ export default function InventoryIntelligenceScreen() {
         <TextInput
           style={styles.search}
           placeholder="Search within this list..."
-          placeholderTextColor={colors.muted}
+          placeholderTextColor={theme.muted}
           value={search}
           onChangeText={setSearch}
         />
@@ -72,7 +76,7 @@ export default function InventoryIntelligenceScreen() {
         data={rows}
         keyExtractor={(r, i) => `${tab}-${r.id || r.name}-${i}`}
         contentContainerStyle={styles.list}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={colors.accent} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={theme.accent} />}
         ListEmptyComponent={<EmptyState text="Nothing in this category" icon="📊" />}
         renderItem={({ item, index }) => {
           if (item.kind === 'sold') {
@@ -86,7 +90,7 @@ export default function InventoryIntelligenceScreen() {
               </Card>
             );
           }
-          const status = pharmacyStockStatus(item, colors);
+          const status = pharmacyStockStatus(item, theme);
           const d = item.expiry ? daysUntil(item.expiry) : null;
           return (
             <Card index={index} style={styles.card}>
@@ -108,18 +112,18 @@ export default function InventoryIntelligenceScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (t) => StyleSheet.create({
   header: { padding: 16, paddingBottom: 6 },
-  error: { color: colors.danger, fontSize: 12, marginBottom: 8 },
+  error: { color: t.danger, fontSize: 12, marginBottom: 8 },
   search: {
-    backgroundColor: colors.panel, borderWidth: 1, borderColor: colors.panelBorder, borderRadius: 10,
-    color: colors.text, paddingHorizontal: 14, paddingVertical: 10, marginBottom: 10,
+    backgroundColor: t.panel, borderWidth: 1, borderColor: t.panelBorder, borderRadius: 12,
+    color: t.text, paddingHorizontal: 14, paddingVertical: 10, marginBottom: 10,
   },
-  count: { color: colors.muted, fontSize: 11, marginTop: 8 },
+  count: { color: t.muted, fontSize: 11, marginTop: 8 },
   list: { padding: 16, paddingTop: 8, paddingBottom: 32 },
   card: { marginBottom: 10 },
   rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
-  name: { color: colors.text, fontWeight: '700', fontSize: 15, flex: 1, marginRight: 8 },
-  units: { color: colors.accent, fontWeight: '800' },
-  meta: { color: colors.muted, fontSize: 12, marginTop: 2 },
+  name: { color: t.text, fontWeight: '700', fontSize: 15, flex: 1, marginRight: 8 },
+  units: { color: t.accent, fontWeight: '800' },
+  meta: { color: t.muted, fontSize: 12, marginTop: 2 },
 });

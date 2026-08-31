@@ -1,8 +1,9 @@
 import { ScrollView, View, Text, StyleSheet } from 'react-native';
 import { useAuth } from '../context/AuthContext';
+import { useTheme } from '../context/ThemeContext';
+import { useThemedStyles } from '../theme/useThemedStyles';
 import { Screen, Card } from '../components/UI';
 import { HubTile } from '../components/Bits';
-import { colors } from '../lib/format';
 
 const ROLE_LABELS = {
   admin: 'Admin', warehouse_manager: 'Warehouse Manager', pharmacist: 'Pharmacist', viewer: 'Viewer',
@@ -10,6 +11,8 @@ const ROLE_LABELS = {
 
 export default function MoreScreen({ navigation }) {
   const { user, role } = useAuth();
+  const { theme } = useTheme();
+  const styles = useThemedStyles(makeStyles);
   return (
     <Screen>
       <ScrollView contentContainerStyle={styles.content}>
@@ -21,10 +24,10 @@ export default function MoreScreen({ navigation }) {
         </Card>
 
         <View style={{ marginTop: 8 }}>
-          <HubTile icon="pulse-outline" label="System Health" sub="Connection, sync, realtime status" color={colors.success} onPress={() => navigation.navigate('System Health')} />
-          <HubTile icon="settings-outline" label="Settings" sub="Account, thresholds, locations" onPress={() => navigation.navigate('Settings')} />
+          <HubTile icon="pulse-outline" label="System Health" sub="Connection, sync, realtime status" color={theme.success} onPress={() => navigation.navigate('System Health')} />
+          <HubTile icon="settings-outline" label="Settings" sub="Account, appearance, thresholds, locations" onPress={() => navigation.navigate('Settings')} />
           {role === 'admin' && (
-            <HubTile icon="shield-checkmark-outline" label="Admin" sub="Backups & restore" color={colors.purple} onPress={() => navigation.navigate('Admin')} />
+            <HubTile icon="shield-checkmark-outline" label="Admin" sub="Backups & restore" color={theme.purple} onPress={() => navigation.navigate('Admin')} />
           )}
         </View>
       </ScrollView>
@@ -32,10 +35,10 @@ export default function MoreScreen({ navigation }) {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (t) => StyleSheet.create({
   content: { padding: 16, paddingBottom: 40 },
-  title: { color: colors.text, fontSize: 28, fontWeight: '800', letterSpacing: -0.5, marginBottom: 16 },
+  title: { color: t.text, fontSize: 28, fontWeight: '800', letterSpacing: -0.5, marginBottom: 16 },
   card: { marginBottom: 8 },
-  email: { color: colors.text, fontSize: 15, fontWeight: '700' },
-  role: { color: colors.accent, fontSize: 13, fontWeight: '700', marginTop: 4 },
+  email: { color: t.text, fontSize: 15, fontWeight: '700' },
+  role: { color: t.accent, fontSize: 13, fontWeight: '700', marginTop: 4 },
 });

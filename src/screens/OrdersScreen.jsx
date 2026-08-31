@@ -4,15 +4,17 @@ import { MotiView } from 'moti';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useWarehouse } from '../context/WarehouseContext';
 import { useAuth } from '../context/AuthContext';
+import { useTheme } from '../context/ThemeContext';
+import { useThemedStyles } from '../theme/useThemedStyles';
 import { Card, Badge, EmptyState, ScreenLoading, AnimatedPressable, Screen } from '../components/UI';
 import CreatePOModal from '../components/CreatePOModal';
 import CreateTransferModal from '../components/CreateTransferModal';
-import { formatCurrency, formatDate, colors } from '../lib/format';
+import { formatCurrency, formatDate } from '../lib/format';
 
-function poStatusColor(status) {
-  if (status === 'Received') return colors.success;
-  if (status === 'Cancelled') return colors.danger;
-  return colors.warning;
+function poStatusColor(status, t) {
+  if (status === 'Received') return t.success;
+  if (status === 'Cancelled') return t.danger;
+  return t.warning;
 }
 
 export default function OrdersScreen() {
@@ -22,6 +24,8 @@ export default function OrdersScreen() {
     poHasMore, toHasMore, loadMorePurchaseOrders, loadMoreTransferOrders,
   } = useWarehouse();
   const { canWriteWarehouse } = useAuth();
+  const { theme } = useTheme();
+  const styles = useThemedStyles(makeStyles);
   const [mode, setMode] = useState('po');
   const [viewOrder, setViewOrder] = useState(null);
   const [createOpen, setCreateOpen] = useState(false);
@@ -64,17 +68,17 @@ export default function OrdersScreen() {
         data={data}
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.list}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={colors.accent} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={theme.accent} />}
         onEndReached={onEndReached}
         onEndReachedThreshold={0.4}
-        ListFooterComponent={hasMore ? <ActivityIndicator color={colors.accent} style={styles.footerLoader} /> : null}
+        ListFooterComponent={hasMore ? <ActivityIndicator color={theme.accent} style={styles.footerLoader} /> : null}
         ListEmptyComponent={<EmptyState text={mode === 'po' ? 'No purchase orders' : 'No transfer orders'} icon="🛒" />}
         renderItem={({ item, index }) => (
           <AnimatedPressable onPress={() => setViewOrder({ ...item, mode })}>
             <Card index={index} style={styles.itemCard}>
               <View style={styles.itemRow}>
                 <Text style={styles.itemName}>{mode === 'po' ? item.poNumber : item.transferNumber}</Text>
-                {mode === 'po' ? <Badge label={item.status} color={poStatusColor(item.status)} /> : <Badge label={item.toLocationName} color={colors.accent} />}
+                {mode === 'po' ? <Badge label={item.status} color={poStatusColor(item.status, theme)} /> : <Badge label={item.toLocationName} color={theme.accent} />}
               </View>
               <Text style={styles.itemMeta}>
                 {mode === 'po' ? item.supplier : formatDate(item.transferDate)} · {item.items.length} item(s)
@@ -87,7 +91,7 @@ export default function OrdersScreen() {
 
       {canWriteWarehouse && (
         <AnimatedPressable style={styles.fab} onPress={() => setCreateOpen(true)}>
-          <Ionicons name="add" size={28} color="#fff" />
+          <Ionicons name="add" size={28} color={theme.onAccent} />
         </AnimatedPressable>
       )}
 
@@ -144,32 +148,32 @@ export default function OrdersScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.bg },
+const makeStyles = (t) => StyleSheet.create({
+  container: { flex: 1, backgroundColor: t.bg },
   header: { padding: 16, paddingBottom: 8 },
-  title: { color: colors.text, fontSize: 26, fontWeight: '800', letterSpacing: -0.4, marginBottom: 12 },
-  segmented: { flexDirection: 'row', backgroundColor: colors.panel, borderRadius: 10, borderWidth: 1, borderColor: colors.panelBorder, padding: 4 },
+  title: { color: t.text, fontSize: 26, fontWeight: '800', letterSpacing: -0.4, marginBottom: 12 },
+  segmented: { flexDirection: 'row', backgroundColor: t.chip, borderRadius: 12, borderWidth: 1, borderColor: t.panelBorder, padding: 4 },
   segBtn: { flex: 1, paddingVertical: 8, borderRadius: 8, alignItems: 'center' },
-  segBtnActive: { backgroundColor: colors.accent },
-  segText: { color: colors.muted, fontSize: 13 },
-  segTextActive: { color: '#fff', fontWeight: '600' },
+  segBtnActive: { backgroundColor: t.accent },
+  segText: { color: t.muted, fontSize: 13 },
+  segTextActive: { color: t.onAccent, fontWeight: '600' },
   list: { padding: 16, paddingTop: 8, paddingBottom: 32 },
   footerLoader: { paddingVertical: 20 },
   itemCard: { marginBottom: 10 },
   itemRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
-  itemName: { color: colors.text, fontWeight: '600', fontSize: 15 },
-  itemMeta: { color: colors.muted, fontSize: 12, marginTop: 2 },
-  modalContainer: { flex: 1, backgroundColor: colors.bg },
-  modalTitle: { color: colors.text, fontSize: 20, fontWeight: '700', marginBottom: 8 },
+  itemName: { color: t.text, fontWeight: '600', fontSize: 15 },
+  itemMeta: { color: t.muted, fontSize: 12, marginTop: 2 },
+  modalContainer: { flex: 1, backgroundColor: t.bg },
+  modalTitle: { color: t.text, fontSize: 20, fontWeight: '700', marginBottom: 8 },
   actionRow: { flexDirection: 'row', gap: 10, marginTop: 16 },
-  receiveBtn: { flex: 1, backgroundColor: colors.success, borderRadius: 10, paddingVertical: 12, alignItems: 'center', marginRight: 10 },
-  cancelBtn: { flex: 1, backgroundColor: colors.danger, borderRadius: 10, paddingVertical: 12, alignItems: 'center' },
-  actionBtnText: { color: '#fff', fontWeight: '700' },
-  closeBtn: { padding: 16, alignItems: 'center', borderTopWidth: 1, borderTopColor: colors.panelBorder },
-  closeBtnText: { color: colors.accent, fontWeight: '600' },
+  receiveBtn: { flex: 1, backgroundColor: t.success, borderRadius: 12, paddingVertical: 12, alignItems: 'center', marginRight: 10 },
+  cancelBtn: { flex: 1, backgroundColor: t.danger, borderRadius: 12, paddingVertical: 12, alignItems: 'center' },
+  actionBtnText: { color: t.onAccent, fontWeight: '700' },
+  closeBtn: { padding: 16, alignItems: 'center', borderTopWidth: 1, borderTopColor: t.panelBorder },
+  closeBtnText: { color: t.accent, fontWeight: '600' },
   fab: {
     position: 'absolute', right: 20, bottom: 24, width: 56, height: 56, borderRadius: 28,
-    backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center',
-    shadowColor: colors.accent, shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.4, shadowRadius: 12, elevation: 6,
+    backgroundColor: t.accent, alignItems: 'center', justifyContent: 'center',
+    shadowColor: t.accent, shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.4, shadowRadius: 12, elevation: 6,
   },
 });
