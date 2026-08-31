@@ -64,10 +64,17 @@ export function ChipTabs({ options, value, onChange }) {
 }
 
 // Small "As of HH:MM:SS" line so the reader can tell live data from stale.
+const pad2 = (n) => String(n).padStart(2, '0');
 export function AsOf({ at }) {
   if (!at) return null;
   const d = at instanceof Date ? at : new Date(at);
-  const t = Number.isNaN(d.getTime()) ? '—' : d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  if (Number.isNaN(d.getTime())) return null;
+  let t;
+  try {
+    t = d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  } catch {
+    t = `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+  }
   return <Text style={styles.asOf}>As of {t}</Text>;
 }
 
