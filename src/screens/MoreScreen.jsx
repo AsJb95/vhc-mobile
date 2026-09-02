@@ -10,7 +10,7 @@ const ROLE_LABELS = {
 };
 
 export default function MoreScreen({ navigation }) {
-  const { user, role } = useAuth();
+  const { user, role, isPlatformAdmin, clinicName } = useAuth();
   const { theme } = useTheme();
   const styles = useThemedStyles(makeStyles);
   return (
@@ -20,13 +20,16 @@ export default function MoreScreen({ navigation }) {
 
         <Card style={styles.card}>
           <Text style={styles.email}>{user?.email}</Text>
-          <Text style={styles.role}>{ROLE_LABELS[role] || 'No role assigned'}</Text>
+          <Text style={styles.role}>
+            {isPlatformAdmin ? 'VHC Admin' : (ROLE_LABELS[role] || 'No role assigned')}
+            {clinicName ? ` · ${clinicName}` : ''}
+          </Text>
         </Card>
 
         <View style={{ marginTop: 8 }}>
           <HubTile icon="pulse-outline" label="System Health" sub="Connection, sync, realtime status" color={theme.success} onPress={() => navigation.navigate('System Health')} />
           <HubTile icon="settings-outline" label="Settings" sub="Account, appearance, thresholds, locations" onPress={() => navigation.navigate('Settings')} />
-          {role === 'admin' && (
+          {isPlatformAdmin && (
             <HubTile icon="shield-checkmark-outline" label="Admin" sub="Backups & restore" color={theme.purple} onPress={() => navigation.navigate('Admin')} />
           )}
         </View>

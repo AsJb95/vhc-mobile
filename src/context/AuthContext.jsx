@@ -13,6 +13,9 @@ export function AuthProvider({ children }) {
   const [profileResolved, setProfileResolved] = useState(false);
   const profileReqRef = useRef(0);
   const loadedForUserRef = useRef(undefined);
+  // Common VHC auth: which clinic (if any) this login is staffed to. Platform
+  // admins have no staff row and therefore no clinic — that is expected.
+  const [clinic, setClinic] = useState(null); // { id, name } | null
 
   const loadProfile = useCallback(async (userId) => {
     const reqId = profileReqRef.current + 1;
@@ -77,6 +80,24 @@ export function AuthProvider({ children }) {
     return () => sub.subscription.unsubscribe();
   }, [loadProfile]);
 
+  // Resolve the clinic for the current login (staff -> clinics). Isolated from
+  // the profile-resolution machinery above so it can't affect roleResolved.
+  useEffect(() => {
+    const uid = session?.user?.id;
+    if (!uid) { setClinic(null); return undefined; }
+    let alive = true;
+    supabase
+      .from('staff')
+      .select('clinic_id, clinics(name)')
+      .eq('id', uid)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (!alive) return;
+        setClinic(data ? { id: data.clinic_id, name: data.clinics?.name || 'Clinic' } : null);
+      });
+    return () => { alive = false; };
+  }, [session?.user?.id]);
+
   const signIn = useCallback(async (email, password) => {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     return error;
@@ -87,12 +108,19 @@ export function AuthProvider({ children }) {
   }, []);
 
   const role = profile?.role || null;
+  // Personal ("platform") VHC Admin — the real privilege boundary. The shared
+  // clinic login can be app-level role='admin' without being a platform admin,
+  // so admin-only screens (backups, config) must gate on this, not on role.
+  const isPlatformAdmin = profile?.is_platform_admin === true;
 
   const value = useMemo(() => ({
     session,
     user: session?.user || null,
     profile,
     role,
+    isPlatformAdmin,
+    clinicId: clinic?.id || null,
+    clinicName: clinic?.name || null,
     canWriteWarehouse: role === 'admin' || role === 'warehouse_manager',
     canWritePharmacy: role === 'admin' || role === 'pharmacist',
     loading: session === undefined,
@@ -100,7 +128,7 @@ export function AuthProvider({ children }) {
     roleResolved: session != null && profileResolved,
     signIn,
     signOut,
-  }), [session, profile, role, profileResolved, signIn, signOut]);
+  }), [session, profile, role, isPlatformAdmin, clinic, profileResolved, signIn, signOut]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

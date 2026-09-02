@@ -75,14 +75,14 @@ function WarehouseStack() {
 }
 
 function MoreStack() {
-  const { role } = useAuth();
+  const { isPlatformAdmin } = useAuth();
   const screenOptions = useStackScreenOptions();
   return (
     <Stack.Navigator screenOptions={screenOptions}>
       <Stack.Screen name="More" component={MoreScreen} options={{ headerShown: false }} />
       <Stack.Screen name="System Health" component={SystemHealthScreen} />
       <Stack.Screen name="Settings" component={SettingsScreen} />
-      {role === 'admin' && <Stack.Screen name="Admin" component={AdminScreen} />}
+      {isPlatformAdmin && <Stack.Screen name="Admin" component={AdminScreen} />}
     </Stack.Navigator>
   );
 }
