@@ -1,4 +1,4 @@
-import { Text, View, ScrollView, StyleSheet } from 'react-native';
+import { Text, View, ScrollView, StyleSheet, Alert } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useAuth } from '../context/AuthContext';
 import { useWarehouse } from '../context/WarehouseContext';
@@ -6,23 +6,27 @@ import { useTheme } from '../context/ThemeContext';
 import { useThemedStyles } from '../theme/useThemedStyles';
 import { Card, AnimatedPressable, Screen } from '../components/UI';
 
-const ROLE_LABELS = {
-  admin: 'Admin',
-  warehouse_manager: 'Warehouse Manager',
-  pharmacist: 'Pharmacist',
-  viewer: 'Viewer',
-};
-
 const THEME_OPTIONS = [
   { key: 'light', label: 'Light', icon: 'sunny-outline' },
   { key: 'dark', label: 'Dark', icon: 'moon-outline' },
 ];
 
 export default function SettingsScreen() {
-  const { user, role, signOut } = useAuth();
+  const { user, isPlatformAdmin, clinicName, signOut } = useAuth();
   const { settings, locations } = useWarehouse();
   const { theme, scheme, setScheme } = useTheme();
   const styles = useThemedStyles(makeStyles);
+
+  // Server-verified account type (profiles.is_platform_admin) — never email,
+  // never a local flag. Updates automatically when the signed-in user changes.
+  const accountType = isPlatformAdmin ? 'Platform Admin' : 'Clinic Admin';
+
+  function confirmSignOut() {
+    Alert.alert('Sign out', 'Sign out of this device?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Sign Out', style: 'destructive', onPress: () => { signOut(); } },
+    ]);
+  }
 
   return (
     <Screen>
@@ -32,7 +36,8 @@ export default function SettingsScreen() {
         <Card index={0} style={styles.card}>
           <Text style={styles.sectionTitle}>Account</Text>
           <Text style={styles.row}>{user?.email}</Text>
-          <Text style={styles.roleBadge}>{ROLE_LABELS[role] || 'No role assigned'}</Text>
+          <Text style={styles.roleBadge}>{accountType}</Text>
+          {clinicName ? <Text style={styles.row}>{clinicName}</Text> : null}
         </Card>
 
         <Card index={1} style={styles.card}>
@@ -75,7 +80,7 @@ export default function SettingsScreen() {
           ))}
         </Card>
 
-        <AnimatedPressable style={styles.signOutBtn} onPress={signOut}>
+        <AnimatedPressable style={styles.signOutBtn} onPress={confirmSignOut}>
           <Text style={styles.signOutText}>Sign Out</Text>
         </AnimatedPressable>
       </ScrollView>

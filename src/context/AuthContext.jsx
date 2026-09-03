@@ -104,7 +104,15 @@ export function AuthProvider({ children }) {
   }, []);
 
   const signOut = useCallback(async () => {
-    await supabase.auth.signOut();
+    // supabase-js clears the local session and emits SIGNED_OUT before the
+    // network call, and onAuthStateChange (above) then drops us back to the
+    // Login screen with no restart. Swallow a network failure on the server
+    // revoke so it can't surface as an unhandled rejection or block the UI.
+    try {
+      await supabase.auth.signOut();
+    } catch (e) {
+      console.warn('signOut network error (local session already cleared):', e);
+    }
   }, []);
 
   const role = profile?.role || null;

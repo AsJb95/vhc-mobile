@@ -5,14 +5,12 @@ import { useThemedStyles } from '../theme/useThemedStyles';
 import { Screen, Card } from '../components/UI';
 import { HubTile } from '../components/Bits';
 
-const ROLE_LABELS = {
-  admin: 'Admin', warehouse_manager: 'Warehouse Manager', pharmacist: 'Pharmacist', viewer: 'Viewer',
-};
-
 export default function MoreScreen({ navigation }) {
-  const { user, role, isPlatformAdmin, clinicName } = useAuth();
+  const { user, isPlatformAdmin, clinicName } = useAuth();
   const { theme } = useTheme();
   const styles = useThemedStyles(makeStyles);
+  // Server-verified account type (profiles.is_platform_admin), not the email.
+  const accountType = isPlatformAdmin ? 'Platform Admin' : 'Clinic Admin';
   return (
     <Screen>
       <ScrollView contentContainerStyle={styles.content}>
@@ -21,8 +19,7 @@ export default function MoreScreen({ navigation }) {
         <Card style={styles.card}>
           <Text style={styles.email}>{user?.email}</Text>
           <Text style={styles.role}>
-            {isPlatformAdmin ? 'VHC Admin' : (ROLE_LABELS[role] || 'No role assigned')}
-            {clinicName ? ` · ${clinicName}` : ''}
+            {accountType}{clinicName ? ` · ${clinicName}` : ''}
           </Text>
         </Card>
 
