@@ -1,4 +1,4 @@
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, ScrollView } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { AnimatedPressable } from './UI';
 import { useTheme } from '../context/ThemeContext';
@@ -70,6 +70,43 @@ export function ChipTabs({ options, value, onChange }) {
   );
 }
 
+const AZ_LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+
+// Horizontally-scrollable A–Z index filter (Main Stock / Pharmacy Stock).
+// `value` is 'All' or a single letter; the caller does the actual filtering
+// (case-insensitive match on the medicine/product name's first letter) so this
+// stays a pure, reusable picker — same shape as ChipTabs, just scrollable
+// instead of wrapping, since 27 options wrap into several rows on a phone.
+export function AlphabetFilter({ value, onChange }) {
+  const styles = useThemedStyles(makeStyles);
+  return (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      style={styles.alphaScroll}
+      contentContainerStyle={styles.alphaRow}
+    >
+      <AnimatedPressable
+        style={[styles.alphaChip, value === 'All' && styles.alphaChipActive]}
+        onPress={() => onChange('All')}
+        hitSlop={{ top: 6, bottom: 6, left: 2, right: 2 }}
+      >
+        <Text style={[styles.alphaChipText, value === 'All' && styles.alphaChipTextActive]}>All</Text>
+      </AnimatedPressable>
+      {AZ_LETTERS.map((l) => (
+        <AnimatedPressable
+          key={l}
+          style={[styles.alphaChip, value === l && styles.alphaChipActive]}
+          onPress={() => onChange(l)}
+          hitSlop={{ top: 6, bottom: 6, left: 2, right: 2 }}
+        >
+          <Text style={[styles.alphaChipText, value === l && styles.alphaChipTextActive]}>{l}</Text>
+        </AnimatedPressable>
+      ))}
+    </ScrollView>
+  );
+}
+
 // Small "As of HH:MM:SS" line so the reader can tell live data from stale.
 const pad2 = (n) => String(n).padStart(2, '0');
 export function AsOf({ at }) {
@@ -108,5 +145,15 @@ const makeStyles = (t) => StyleSheet.create({
   chipActive: { backgroundColor: t.accent, borderColor: t.accent },
   chipText: { color: t.muted, fontSize: 12, fontWeight: '600' },
   chipTextActive: { color: t.onAccent },
+  alphaScroll: { marginTop: 4, marginBottom: 2 },
+  alphaRow: { flexDirection: 'row', gap: 6, paddingRight: 8, paddingVertical: 2 },
+  alphaChip: {
+    minWidth: 32, height: 32, paddingHorizontal: 7, borderRadius: 10,
+    backgroundColor: t.chip, borderWidth: 1, borderColor: t.panelBorder,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  alphaChipActive: { backgroundColor: t.accent, borderColor: t.accent },
+  alphaChipText: { color: t.muted, fontSize: 12, fontWeight: '700' },
+  alphaChipTextActive: { color: t.onAccent },
   asOf: { color: t.muted, fontSize: 11, marginBottom: 10 },
 });

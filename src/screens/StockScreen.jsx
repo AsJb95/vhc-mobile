@@ -6,7 +6,7 @@ import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { useThemedStyles } from '../theme/useThemedStyles';
 import { Card, Badge, EmptyState, ScreenLoading, StatCard, AnimatedPressable, Screen } from '../components/UI';
-import { SectionTitle } from '../components/Bits';
+import { SectionTitle, AlphabetFilter } from '../components/Bits';
 import AddItemModal from '../components/AddItemModal';
 import MoveStockModal from '../components/MoveStockModal';
 import { formatCurrency, expiryStatus, stockStatus } from '../lib/format';
@@ -29,11 +29,19 @@ export default function StockScreen() {
   const styles = useThemedStyles(makeStyles);
   const [search, setSearch] = useState('');
   const [tab, setTab] = useState('all');
+  const [letter, setLetter] = useState('All');
   const [modalOpen, setModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
   const [movingItem, setMovingItem] = useState(null);
 
-  function openAdd() { setEditingItem(null); setModalOpen(true); }
+  // Guards against a double-tap opening the form twice / firing two adds —
+  // openAdd is idempotent (setModalOpen(true) again is a no-op) but this also
+  // stops a second tap while the modal is still animating in.
+  function openAdd() {
+    if (modalOpen) return;
+    setEditingItem(null);
+    setModalOpen(true);
+  }
   function openEdit(item) { setEditingItem(item); setModalOpen(true); }
 
   // Headline numbers for the dashboard. getAlerts() is the same bucketing the
@@ -67,12 +75,15 @@ export default function StockScreen() {
       case 'expired': list = list.filter((i) => i.expiry && new Date(i.expiry) < now); break;
       default: break;
     }
+    if (letter !== 'All') {
+      list = list.filter((i) => (i.name || '').trim().toUpperCase().startsWith(letter));
+    }
     if (search.trim()) {
       const s = search.trim().toLowerCase();
       list = list.filter((i) => (i.name || '').toLowerCase().includes(s) || (i.batch || '').toLowerCase().includes(s) || (i.stockist || '').toLowerCase().includes(s));
     }
     return list;
-  }, [mainStock, tab, search, settings.lowStockThreshold, settings.expiryAlertDays]);
+  }, [mainStock, tab, letter, search, settings.lowStockThreshold, settings.expiryAlertDays]);
 
   if (loading) return <ScreenLoading />;
 
@@ -108,8 +119,22 @@ export default function StockScreen() {
   return (
     <Screen>
       <View style={styles.header}>
-        <Text style={styles.title}>Main Stock</Text>
-        <Text style={styles.subtitle}>{mainStock.length} products</Text>
+        <View style={styles.headerTop}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.title}>Main Stock</Text>
+            <Text style={styles.subtitle}>{mainStock.length} products</Text>
+          </View>
+          {canWriteWarehouse && (
+            <AnimatedPressable
+              style={styles.newEntryBtn}
+              onPress={openAdd}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
+              <Ionicons name="add-circle" size={18} color={theme.onAccent} />
+              <Text style={styles.newEntryBtnText}>New Entry</Text>
+            </AnimatedPressable>
+          )}
+        </View>
         {stockTruncated ? (
           <Text style={styles.truncatedNote}>
             Showing the {mainStock.length} most-recently-updated items — some older items are not loaded. Use search on the desktop app for the full catalogue.
@@ -129,6 +154,7 @@ export default function StockScreen() {
             </AnimatedPressable>
           ))}
         </View>
+        <AlphabetFilter value={letter} onChange={setLetter} />
       </View>
 
       <FlatList
@@ -137,7 +163,12 @@ export default function StockScreen() {
         contentContainerStyle={styles.list}
         ListHeaderComponent={dashboard}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={theme.accent} />}
-        ListEmptyComponent={<EmptyState text="No items match this filter" icon="📦" />}
+        ListEmptyComponent={
+          <EmptyState
+            text={letter !== 'All' ? `No items found starting with "${letter}"` : 'No items match this filter'}
+            icon="📦"
+          />
+        }
         renderItem={({ item, index }) => {
           const exp = expiryStatus(item.expiry);
           const status = stockStatus(item.stock, settings.lowStockThreshold);
@@ -178,12 +209,6 @@ export default function StockScreen() {
         }}
       />
 
-      {canWriteWarehouse && (
-        <AnimatedPressable style={styles.fab} onPress={openAdd}>
-          <Ionicons name="add" size={28} color={theme.onAccent} />
-        </AnimatedPressable>
-      )}
-
       <AddItemModal visible={modalOpen} item={editingItem} onClose={() => setModalOpen(false)} />
       <MoveStockModal visible={!!movingItem} item={movingItem} onClose={() => setMovingItem(null)} />
     </Screen>
@@ -202,8 +227,16 @@ function AlertTile({ styles, label, value, color, active, onPress }) {
 const makeStyles = (t) => StyleSheet.create({
   container: { flex: 1, backgroundColor: t.bg },
   header: { padding: 16, paddingBottom: 8 },
+  headerTop: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
   title: { color: t.text, fontSize: 26, fontWeight: '800', letterSpacing: -0.4 },
   subtitle: { color: t.muted, fontSize: 12, marginBottom: 12 },
+  newEntryBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    height: 40, paddingHorizontal: 14, borderRadius: 12,
+    backgroundColor: t.accent,
+    shadowColor: t.accent, shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 3,
+  },
+  newEntryBtnText: { color: t.onAccent, fontWeight: '800', fontSize: 13 },
   truncatedNote: { color: t.warning, fontSize: 11, marginBottom: 10 },
   search: {
     backgroundColor: t.panel, borderWidth: 1, borderColor: t.panelBorder, borderRadius: 12,
@@ -242,9 +275,4 @@ const makeStyles = (t) => StyleSheet.create({
   moveBtnText: { color: t.accent, fontSize: 13, fontWeight: '700' },
   adjustBtn: { width: 34, height: 34, borderRadius: 10, backgroundColor: t.chip, borderWidth: 1, borderColor: t.panelBorder, alignItems: 'center', justifyContent: 'center' },
   adjustBtnText: { color: t.text, fontSize: 18, fontWeight: '700' },
-  fab: {
-    position: 'absolute', right: 20, bottom: 24, width: 56, height: 56, borderRadius: 28,
-    backgroundColor: t.accent, alignItems: 'center', justifyContent: 'center',
-    shadowColor: t.accent, shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.4, shadowRadius: 12, elevation: 6,
-  },
 });

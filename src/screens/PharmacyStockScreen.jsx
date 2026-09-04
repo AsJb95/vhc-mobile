@@ -6,6 +6,7 @@ import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { useThemedStyles } from '../theme/useThemedStyles';
 import { Card, Badge, EmptyState, ScreenLoading, AnimatedPressable, Screen } from '../components/UI';
+import { AlphabetFilter } from '../components/Bits';
 import AddItemModal from '../components/AddItemModal';
 import { formatCurrency, expiryStatus } from '../lib/format';
 import {
@@ -29,6 +30,7 @@ export default function PharmacyStockScreen() {
   const styles = useThemedStyles(makeStyles);
   const [search, setSearch] = useState('');
   const [tab, setTab] = useState('all');
+  const [letter, setLetter] = useState('All');
   const [modalOpen, setModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
 
@@ -49,12 +51,15 @@ export default function PharmacyStockScreen() {
       case 'expired': list = list.filter((i) => i.expiry && new Date(i.expiry) < now); break;
       default: break;
     }
+    if (letter !== 'All') {
+      list = list.filter((i) => (i.name || '').trim().toUpperCase().startsWith(letter));
+    }
     if (search.trim()) {
       const s = search.trim().toLowerCase();
       list = list.filter((i) => (i.name || '').toLowerCase().includes(s) || (i.batch || '').toLowerCase().includes(s) || (i.stockist || '').toLowerCase().includes(s));
     }
     return list;
-  }, [pharmacyStock, tab, search, settings.expiryAlertDays]);
+  }, [pharmacyStock, tab, letter, search, settings.expiryAlertDays]);
 
   if (loading) return <ScreenLoading />;
 
@@ -85,6 +90,7 @@ export default function PharmacyStockScreen() {
             </AnimatedPressable>
           ))}
         </View>
+        <AlphabetFilter value={letter} onChange={setLetter} />
       </View>
 
       <FlatList
@@ -94,7 +100,11 @@ export default function PharmacyStockScreen() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={theme.accent} />}
         ListEmptyComponent={
           <EmptyState
-            text={pharmacyLocation ? 'No pharmacy stock yet. Add items with the + button, or transfer them in from the desktop Warehouse app.' : 'No Pharmacy location configured yet'}
+            text={
+              letter !== 'All'
+                ? `No items found starting with "${letter}"`
+                : pharmacyLocation ? 'No pharmacy stock yet. Add items with the + button, or transfer them in from the desktop Warehouse app.' : 'No Pharmacy location configured yet'
+            }
             icon="💊"
           />
         }
