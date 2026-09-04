@@ -763,6 +763,9 @@ export function WarehouseProvider({ children }) {
     }
 
     await fetchAll();
+    // Truthy result so a caller (e.g. the Move Stock dialog) can show a
+    // success message; a failure throws before reaching here.
+    return { ok: true, transferNumber, toLocationId: order.toLocationId };
   }
 
   function getAlerts() {

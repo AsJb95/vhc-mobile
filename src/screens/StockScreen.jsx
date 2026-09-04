@@ -8,6 +8,7 @@ import { useThemedStyles } from '../theme/useThemedStyles';
 import { Card, Badge, EmptyState, ScreenLoading, StatCard, AnimatedPressable, Screen } from '../components/UI';
 import { SectionTitle } from '../components/Bits';
 import AddItemModal from '../components/AddItemModal';
+import MoveStockModal from '../components/MoveStockModal';
 import { formatCurrency, expiryStatus, stockStatus } from '../lib/format';
 
 const TABS = [
@@ -30,6 +31,7 @@ export default function StockScreen() {
   const [tab, setTab] = useState('all');
   const [modalOpen, setModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
+  const [movingItem, setMovingItem] = useState(null);
 
   function openAdd() { setEditingItem(null); setModalOpen(true); }
   function openEdit(item) { setEditingItem(item); setModalOpen(true); }
@@ -157,6 +159,10 @@ export default function StockScreen() {
                   <Text style={styles.stockValue}>{item.stock} units</Text>
                   {canWriteWarehouse && (
                     <View style={styles.adjustRow}>
+                      <AnimatedPressable style={styles.moveBtn} onPress={() => setMovingItem(item)}>
+                        <Ionicons name="swap-horizontal" size={15} color={theme.accent} />
+                        <Text style={styles.moveBtnText}>Move</Text>
+                      </AnimatedPressable>
                       <AnimatedPressable style={styles.adjustBtn} onPress={() => adjustStock(item.id, -1)}>
                         <Text style={styles.adjustBtnText}>−</Text>
                       </AnimatedPressable>
@@ -179,6 +185,7 @@ export default function StockScreen() {
       )}
 
       <AddItemModal visible={modalOpen} item={editingItem} onClose={() => setModalOpen(false)} />
+      <MoveStockModal visible={!!movingItem} item={movingItem} onClose={() => setMovingItem(null)} />
     </Screen>
   );
 }
@@ -226,8 +233,14 @@ const makeStyles = (t) => StyleSheet.create({
   itemName: { color: t.text, fontWeight: '600', fontSize: 15 },
   itemMeta: { color: t.muted, fontSize: 12 },
   stockValue: { color: t.text, fontWeight: '700' },
-  adjustRow: { flexDirection: 'row', gap: 8 },
-  adjustBtn: { width: 32, height: 32, borderRadius: 10, backgroundColor: t.chip, borderWidth: 1, borderColor: t.panelBorder, alignItems: 'center', justifyContent: 'center', marginLeft: 8 },
+  adjustRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  moveBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 5, height: 34,
+    paddingHorizontal: 12, borderRadius: 10,
+    backgroundColor: `${t.accent}1f`, borderWidth: 1, borderColor: `${t.accent}55`,
+  },
+  moveBtnText: { color: t.accent, fontSize: 13, fontWeight: '700' },
+  adjustBtn: { width: 34, height: 34, borderRadius: 10, backgroundColor: t.chip, borderWidth: 1, borderColor: t.panelBorder, alignItems: 'center', justifyContent: 'center' },
   adjustBtnText: { color: t.text, fontSize: 18, fontWeight: '700' },
   fab: {
     position: 'absolute', right: 20, bottom: 24, width: 56, height: 56, borderRadius: 28,

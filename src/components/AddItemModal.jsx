@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Modal, View, Text, ScrollView, StyleSheet, Alert } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Screen, AnimatedPressable } from './UI';
 import { FormField } from './FormField';
 import { useWarehouse } from '../context/WarehouseContext';
@@ -25,6 +26,7 @@ export default function AddItemModal({ visible, item, onClose, target = 'main' }
     addPharmacyItem, updatePharmacyItem, deletePharmacyItem,
   } = useWarehouse();
   const styles = useThemedStyles(makeStyles);
+  const insets = useSafeAreaInsets();
   const [form, setForm] = useState(() => (item ? { ...BLANK, ...item, correctionReason: '' } : { ...BLANK }));
   const [saving, setSaving] = useState(false);
 
@@ -153,12 +155,12 @@ export default function AddItemModal({ visible, item, onClose, target = 'main' }
           )}
         </ScrollView>
 
-        <View style={styles.footer}>
+        <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 12) + 10 }]}>
           <AnimatedPressable style={styles.cancelBtn} onPress={onClose}>
             <Text style={styles.cancelBtnText}>Cancel</Text>
           </AnimatedPressable>
           <AnimatedPressable style={styles.saveBtn} onPress={save} disabled={saving}>
-            <Text style={styles.saveBtnText}>{saving ? 'Saving...' : item ? 'Save Changes' : 'Add Item'}</Text>
+            <Text style={styles.saveBtnText}>{saving ? 'Saving…' : item ? 'Save' : 'Add Item'}</Text>
           </AnimatedPressable>
         </View>
       </Screen>
@@ -173,9 +175,19 @@ const makeStyles = (t) => StyleSheet.create({
   half: { flex: 1 },
   deleteBtn: { marginTop: 8, alignItems: 'center', padding: 12 },
   deleteBtnText: { color: t.danger, fontWeight: '600' },
-  footer: { flexDirection: 'row', gap: 10, padding: 16, borderTopWidth: 1, borderTopColor: t.panelBorder },
-  cancelBtn: { flex: 1, backgroundColor: t.panel, borderWidth: 1, borderColor: t.panelBorder, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
-  cancelBtnText: { color: t.text, fontWeight: '600' },
-  saveBtn: { flex: 1, backgroundColor: t.accent, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
-  saveBtnText: { color: t.onAccent, fontWeight: '700' },
+  footer: {
+    flexDirection: 'row', gap: 14,
+    paddingHorizontal: 16, paddingTop: 14,
+    borderTopWidth: 1, borderTopColor: t.panelBorder, backgroundColor: t.bg,
+  },
+  cancelBtn: {
+    flex: 1, minHeight: 54, backgroundColor: t.panel, borderWidth: 1, borderColor: t.panelBorder,
+    borderRadius: 14, alignItems: 'center', justifyContent: 'center',
+  },
+  cancelBtnText: { color: t.text, fontWeight: '700', fontSize: 16 },
+  saveBtn: {
+    flex: 1, minHeight: 54, backgroundColor: t.accent,
+    borderRadius: 14, alignItems: 'center', justifyContent: 'center',
+  },
+  saveBtnText: { color: t.onAccent, fontWeight: '800', fontSize: 16 },
 });
