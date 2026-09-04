@@ -67,6 +67,8 @@ function mapTransferOrderRow(to, locs) {
   return {
     id: to.id,
     transferNumber: to.transfer_number,
+    fromLocationId: to.from_location_id,
+    fromLocationName: (locs || []).find((l) => l.id === to.from_location_id)?.name || '',
     toLocationId: to.to_location_id,
     toLocationName: (locs || []).find((l) => l.id === to.to_location_id)?.name || '',
     transferDate: to.transfer_date,
@@ -768,6 +770,148 @@ export function WarehouseProvider({ children }) {
     return { ok: true, transferNumber, toLocationId: order.toLocationId };
   }
 
+  // ---- Warehouse -> Pharmacy: manual-approval transfers ----
+  // WAREHOUSE STOCK != PHARMACY INVENTORY. A move to the pharmacy_counter is
+  // recorded as a 'Pending' transfer_orders row and touches NO stock_batches
+  // until the user approves it here. transfer_number is the unique tracking id;
+  // transfer_orders/_items rows are the audit trail and are never deleted —
+  // approve/cancel only change status.
+
+  async function createPharmacyTransferRequest(order) {
+    const mainId = mainLocationId();
+    const pharmId = pharmacyLocationId();
+    if (!pharmId) throw new Error('No pharmacy_counter location is configured.');
+
+    let transferNumber = await generateTransferNumber();
+    const insertReq = (num) => supabase.from('transfer_orders').insert({
+      transfer_number: num, from_location_id: mainId, to_location_id: pharmId,
+      transfer_date: order.transferDate || null, notes: order.notes || null, status: 'Pending',
+    }).select().single();
+
+    let { data: reqRow, error } = await insertReq(transferNumber);
+    if (error && error.code === '23505') {
+      transferNumber = `${transferNumber}-${Date.now().toString().slice(-4)}`;
+      ({ data: reqRow, error } = await insertReq(transferNumber));
+    }
+    if (error) throw error;
+
+    const lineRows = (order.items || [])
+      .map((line) => {
+        const src = mainStock.find((i) => i.id === line.mainStockId);
+        const qty = Math.max(0, line.qty || 0);
+        if (!src || qty === 0) return null;
+        return {
+          transfer_order_id: reqRow.id, item_id: src.itemId, name: line.name || src.name,
+          batch_no: line.batch || src.batch || null, expiry_date: line.expiry || src.expiry || null,
+          mrp: line.mrp ?? src.mrp, net_rate: line.netRate ?? src.netRate, qty,
+        };
+      })
+      .filter(Boolean);
+    if (lineRows.length === 0) {
+      // Nothing valid to request — remove the empty header so it can't sit in
+      // the pending list forever.
+      await supabase.from('transfer_orders').delete().eq('id', reqRow.id);
+      throw new Error('Nothing to transfer — the item was not found in Main Stock.');
+    }
+    const { error: linesErr } = await supabase.from('transfer_order_items').insert(lineRows);
+    if (linesErr) throw linesErr;
+
+    await fetchAll();
+    return { ok: true, pending: true, transferNumber };
+  }
+
+  // Approve: claim the row (status Pending -> Completed via compare-and-set),
+  // then move stock for real — deduct Main Stock, add to Pharmacy Inventory,
+  // batch-matched. The status claim is the single guard against a double
+  // approval / a cancelled row being approved.
+  async function approvePharmacyTransfer(transferId) {
+    const t = transferOrders.find((x) => x.id === transferId);
+    if (!t) throw new Error('Transfer not found — refresh and try again.');
+    if (t.status !== 'Pending') throw new Error(`This transfer is already "${t.status}".`);
+
+    const mainId = mainLocationId();
+    const pharmId = t.toLocationId || pharmacyLocationId();
+
+    // Friendly pre-check against a live read of every source batch.
+    const sources = [];
+    for (const line of t.items) {
+      const qty = Math.max(0, line.qty || 0);
+      const { data: src, error: srcErr } = await batchEq(
+        supabase.from('stock_batches').select('id, qty, gst, stockist').eq('item_id', line.mainStockId).eq('location_id', mainId),
+        line.batch,
+      ).maybeSingle();
+      if (srcErr) throw srcErr;
+      if (!src || (src.qty || 0) < qty) {
+        await fetchAll().catch(() => {});
+        throw new Error(`Main Stock for "${line.name}" changed — only ${src?.qty || 0} available (need ${qty}). Approval blocked; refresh and verify.`);
+      }
+      sources.push({ line, qty, src });
+    }
+
+    // Claim the transfer. If this lands 0 rows someone else already approved or
+    // cancelled it — never apply the stock twice.
+    const { data: claimed, error: claimErr } = await supabase
+      .from('transfer_orders').update({ status: 'Completed' })
+      .eq('id', transferId).eq('status', 'Pending').select('id');
+    if (claimErr) throw claimErr;
+    if (!claimed || claimed.length === 0) {
+      await fetchAll().catch(() => {});
+      throw new Error('This transfer was already approved or cancelled.');
+    }
+
+    const problems = [];
+    for (const { line, qty, src } of sources) {
+      try {
+        await setBatchQtyGuarded(src.id, src.qty || 0, Math.max(0, (src.qty || 0) - qty));
+        logStockMovement({ itemId: line.mainStockId, locationId: mainId, batchNo: line.batch, type: 'ADJUST', opening: src.qty || 0, closing: Math.max(0, (src.qty || 0) - qty), reason: `Pharmacy transfer ${t.transferNumber} approved (out)` });
+
+        const { data: dest, error: destErr } = await batchEq(
+          supabase.from('stock_batches').select('id, qty').eq('item_id', line.mainStockId).eq('location_id', pharmId),
+          line.batch,
+        ).maybeSingle();
+        if (destErr) throw destErr;
+        if (dest) {
+          const before = dest.qty || 0;
+          await bumpBatchQty(dest.id, qty);
+          logStockMovement({ itemId: line.mainStockId, locationId: pharmId, batchNo: line.batch, type: 'ADJUST', opening: before, closing: before + qty, reason: `Pharmacy transfer ${t.transferNumber} approved (in)` });
+        } else {
+          const { error: insErr } = await supabase.from('stock_batches').insert({
+            item_id: line.mainStockId, location_id: pharmId, batch_no: line.batch || null,
+            expiry_date: line.expiry || null, mrp: line.mrp, net_rate: line.netRate,
+            gst: src.gst ?? null, stockist: src.stockist ?? null, qty,
+          });
+          if (insErr) throw insErr;
+          logStockMovement({ itemId: line.mainStockId, locationId: pharmId, batchNo: line.batch, type: 'ADJUST', opening: 0, closing: qty, reason: `Pharmacy transfer ${t.transferNumber} approved (in, new batch)` });
+        }
+      } catch (e) {
+        problems.push(`${line.name}: ${e.message || e}`);
+      }
+    }
+
+    await fetchAll();
+    if (problems.length) {
+      throw new Error(`Transfer marked Completed, but some lines need checking:\n${problems.join('\n')}`);
+    }
+    return { ok: true, transferNumber: t.transferNumber };
+  }
+
+  // Cancel: pure status change (Pending -> Cancelled). No stock ever moved for a
+  // pending transfer, so nothing to unwind. The row is kept as an audit record.
+  async function cancelPharmacyTransfer(transferId) {
+    const t = transferOrders.find((x) => x.id === transferId);
+    if (t && t.status !== 'Pending') throw new Error(`This transfer is already "${t.status}".`);
+    const { data, error } = await supabase
+      .from('transfer_orders').update({ status: 'Cancelled' })
+      .eq('id', transferId).eq('status', 'Pending').select('id');
+    if (error) throw error;
+    if (!data || data.length === 0) {
+      await fetchAll().catch(() => {});
+      throw new Error('This transfer can no longer be cancelled (it was already approved or cancelled).');
+    }
+    await fetchAll();
+    return { ok: true };
+  }
+
   function getAlerts() {
     const now = new Date();
     const expiryHorizon = new Date(now.getTime() + (alertsConfig.expiryAlertDays || 90) * 24 * 60 * 60 * 1000);
@@ -800,6 +944,18 @@ export function WarehouseProvider({ children }) {
     () => (pharmacyLocation ? (subStocks[pharmacyLocation.id] || []) : []),
     [pharmacyLocation, subStocks],
   );
+
+  // Warehouse -> Pharmacy transfers awaiting manual approval. Derived from the
+  // already-loaded transfer_orders (status 'Pending', destination = pharmacy) —
+  // no extra fetch, and NOT realtime, so nothing lands in Pharmacy Inventory
+  // on its own. Newest first.
+  const pendingPharmacyTransfers = useMemo(() => {
+    const pharmId = pharmacyLocation?.id;
+    if (!pharmId) return [];
+    return transferOrders
+      .filter((t) => t.status === 'Pending' && t.toLocationId === pharmId)
+      .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+  }, [transferOrders, pharmacyLocation]);
 
   function getPharmacyAlerts() {
     const now = new Date();
@@ -835,6 +991,7 @@ export function WarehouseProvider({ children }) {
     addMainItem, updateMainItem, deleteMainItem,
     addPharmacyItem, updatePharmacyItem, deletePharmacyItem,
     createPurchaseOrder, createTransferOrder,
+    createPharmacyTransferRequest, approvePharmacyTransfer, cancelPharmacyTransfer,
     getAlerts, getTotalValue, getSubStockValue, getPharmacyAlerts,
   };
 
@@ -853,6 +1010,9 @@ export function WarehouseProvider({ children }) {
       deletePharmacyItem: guarded('deletePharmacyItem'),
       createPurchaseOrder: guarded('createPurchaseOrder'),
       createTransferOrder: guarded('createTransferOrder'),
+      createPharmacyTransferRequest: guarded('createPharmacyTransferRequest'),
+      approvePharmacyTransfer: guarded('approvePharmacyTransfer'),
+      cancelPharmacyTransfer: guarded('cancelPharmacyTransfer'),
       getAlerts: delegate('getAlerts'),
       getTotalValue: delegate('getTotalValue'),
       getSubStockValue: delegate('getSubStockValue'),
@@ -862,14 +1022,14 @@ export function WarehouseProvider({ children }) {
 
   const value = useMemo(() => ({
     locations, mainStock, subStocks, purchaseOrders, transferOrders, settings,
-    pharmacyLocation, pharmacyStock,
+    pharmacyLocation, pharmacyStock, pendingPharmacyTransfers,
     loading, refreshing, loadError, stockTruncated, lastLoadedAt,
     poHasMore, toHasMore,
     refresh, loadMorePurchaseOrders, loadMoreTransferOrders,
     ...api,
   }), [
     locations, mainStock, subStocks, purchaseOrders, transferOrders, settings,
-    pharmacyLocation, pharmacyStock,
+    pharmacyLocation, pharmacyStock, pendingPharmacyTransfers,
     loading, refreshing, loadError, stockTruncated, lastLoadedAt,
     poHasMore, toHasMore,
     refresh, loadMorePurchaseOrders, loadMoreTransferOrders, api,

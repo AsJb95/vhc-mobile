@@ -1,6 +1,6 @@
 {
   "name": "vhc-mobile",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "main": "index.js",
   "dependencies": {
     "@expo/metro-runtime": "~57.0.14",

@@ -11,7 +11,7 @@ import { periodRange, filterSalesByRange, summarizeSales, buildCostLookup, PAYME
 import { classifyPharmacyStock } from '../lib/pharmacyStock';
 
 export default function PharmacyDashboardScreen({ navigation }) {
-  const { pharmacyStock, pharmacyLocation, settings, loading: whLoading } = useWarehouse();
+  const { pharmacyStock, pharmacyLocation, pendingPharmacyTransfers, settings, loading: whLoading } = useWarehouse();
   const {
     recentSales, creditOutstanding, asOf, loading: phLoading, refreshing, refresh, loadError, salesTruncated,
   } = usePharmacy();
@@ -46,6 +46,30 @@ export default function PharmacyDashboardScreen({ navigation }) {
         {!pharmacyLocation ? (
           <Text style={styles.errorBanner}>No pharmacy_counter location configured — stock figures will be empty.</Text>
         ) : null}
+
+        {pendingPharmacyTransfers.length > 0 ? (
+          <AnimatedPressable onPress={go('Pending Transfers')}>
+            <Card index={0} style={[styles.card, styles.pendingCard]}>
+              <View style={styles.rowBetween}>
+                <Text style={styles.pendingTitle}>🔔  Pending Stock Transfers ({pendingPharmacyTransfers.length})</Text>
+                <Text style={styles.link}>Review ›</Text>
+              </View>
+              <Text style={styles.hint}>
+                Stock moved from Main Stock to the Pharmacy. Pharmacy Inventory updates only after you approve each one.
+              </Text>
+            </Card>
+          </AnimatedPressable>
+        ) : (
+          <AnimatedPressable onPress={go('Pending Transfers')}>
+            <Card index={0} style={styles.card}>
+              <View style={styles.rowBetween}>
+                <Text style={styles.cardLink}>Pending Stock Transfers</Text>
+                <Text style={styles.link}>Open ›</Text>
+              </View>
+              <Text style={styles.hint}>None waiting. Transfers from Main Stock to the Pharmacy appear here for approval.</Text>
+            </Card>
+          </AnimatedPressable>
+        )}
 
         <View style={styles.statGrid}>
           <StatCard index={0} label="Today's Sales" value={formatCurrency(today.totalSales)} color={theme.success} />
@@ -120,6 +144,8 @@ const makeStyles = (t) => StyleSheet.create({
   errorBanner: { color: t.warning, fontSize: 12, marginBottom: 10 },
   statGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
   card: { marginBottom: 12 },
+  pendingCard: { borderColor: `${t.warning}88`, backgroundColor: `${t.warning}14` },
+  pendingTitle: { color: t.text, fontSize: 15, fontWeight: '800', flex: 1, marginRight: 8 },
   divider: { height: 1, backgroundColor: t.panelBorder, marginVertical: 8 },
   link: { color: t.accent, fontSize: 12, fontWeight: '700' },
   cardLink: { color: t.text, fontSize: 15, fontWeight: '700' },

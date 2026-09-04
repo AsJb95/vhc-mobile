@@ -78,7 +78,16 @@ export default function OrdersScreen() {
             <Card index={index} style={styles.itemCard}>
               <View style={styles.itemRow}>
                 <Text style={styles.itemName}>{mode === 'po' ? item.poNumber : item.transferNumber}</Text>
-                {mode === 'po' ? <Badge label={item.status} color={poStatusColor(item.status, theme)} /> : <Badge label={item.toLocationName} color={theme.accent} />}
+                {mode === 'po' ? (
+                  <Badge label={item.status} color={poStatusColor(item.status, theme)} />
+                ) : (
+                  <View style={{ flexDirection: 'row', gap: 6 }}>
+                    {item.status && item.status !== 'Completed' ? (
+                      <Badge label={item.status} color={item.status === 'Pending' ? theme.warning : theme.danger} />
+                    ) : null}
+                    <Badge label={item.toLocationName} color={theme.accent} />
+                  </View>
+                )}
               </View>
               <Text style={styles.itemMeta}>
                 {mode === 'po' ? item.supplier : formatDate(item.transferDate)} · {item.items.length} item(s)

@@ -11,6 +11,7 @@ import PharmacyDashboardScreen from '../screens/PharmacyDashboardScreen';
 import SalesReportsScreen from '../screens/SalesReportsScreen';
 import InventoryIntelligenceScreen from '../screens/InventoryIntelligenceScreen';
 import PharmacyStockScreen from '../screens/PharmacyStockScreen';
+import PendingTransfersScreen from '../screens/PendingTransfersScreen';
 import PatientLookupScreen from '../screens/PatientLookupScreen';
 import CreditScreen from '../screens/CreditScreen';
 import StockScreen from '../screens/StockScreen';
@@ -24,6 +25,7 @@ import AdminScreen from '../screens/AdminScreen';
 
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
+import { useWarehouse } from '../context/WarehouseContext';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -57,6 +59,7 @@ function PharmacyStack() {
       <Stack.Screen name="Sales & Reports" component={SalesReportsScreen} />
       <Stack.Screen name="Inventory Intelligence" component={InventoryIntelligenceScreen} />
       <Stack.Screen name="Pharmacy Stock" component={PharmacyStockScreen} />
+      <Stack.Screen name="Pending Transfers" component={PendingTransfersScreen} />
       {canSeePatients && <Stack.Screen name="Patient Lookup" component={PatientLookupScreen} />}
       {canSeePatients && <Stack.Screen name="Credit / Outstanding" component={CreditScreen} />}
     </Stack.Navigator>
@@ -90,6 +93,8 @@ function MoreStack() {
 export default function RootNavigator() {
   const insets = useSafeAreaInsets();
   const { theme, isDark } = useTheme();
+  const { pendingPharmacyTransfers } = useWarehouse();
+  const pendingCount = pendingPharmacyTransfers?.length || 0;
 
   const navTheme = useMemo(() => {
     const base = isDark ? DarkTheme : DefaultTheme;
@@ -132,7 +137,14 @@ export default function RootNavigator() {
         })}
       >
         <Tab.Screen name="Home" component={HomeScreen} />
-        <Tab.Screen name="Pharmacy" component={PharmacyStack} />
+        <Tab.Screen
+          name="Pharmacy"
+          component={PharmacyStack}
+          options={{
+            tabBarBadge: pendingCount > 0 ? pendingCount : undefined,
+            tabBarBadgeStyle: { backgroundColor: theme.warning, color: theme.onAccent, fontSize: 10 },
+          }}
+        />
         <Tab.Screen name="Warehouse" component={WarehouseStack} />
         <Tab.Screen name="Alerts" component={AlertsScreen} />
         <Tab.Screen name="More" component={MoreStack} />

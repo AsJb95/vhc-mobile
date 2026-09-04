@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Modal, View, Text, ScrollView, StyleSheet, Alert } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Screen, AnimatedPressable, Card } from './UI';
@@ -8,36 +8,43 @@ import { useWarehouse } from '../context/WarehouseContext';
 import { useThemedStyles } from '../theme/useThemedStyles';
 import { formatDate } from '../lib/format';
 
-// Quick "Move Stock" for ONE Main Stock batch row: pick a destination
-// sub-stock / clinic location + a quantity, then hand off to the existing
-// createTransferOrder() — same transfer_orders / transfer_order_items records,
-// same compare-and-set stock writes, same batch/expiry/item identity. No new
-// inventory path is introduced here.
+// Quick "Move Stock" for ONE Main Stock batch row.
+//   * Destination = a warehouse sub-stock location  -> immediate transfer
+//     (existing createTransferOrder: same records, compare-and-set writes).
+//   * Destination = the Pharmacy (pharmacy_counter)  -> a PENDING transfer that
+//     changes NO stock until it is approved from "Pending Stock Transfers".
+// No new inventory path or table is introduced either way.
 export default function MoveStockModal({ visible, item, onClose }) {
-  const { settings, createTransferOrder } = useWarehouse();
+  const { settings, pharmacyLocation, createTransferOrder, createPharmacyTransferRequest } = useWarehouse();
   const styles = useThemedStyles(makeStyles);
   const insets = useSafeAreaInsets();
-  const locations = settings.subStockLocations || [];
+
+  const destinations = useMemo(() => {
+    const subs = (settings.subStockLocations || []).map((l) => ({ id: l.id, name: l.name, isPharmacy: false }));
+    return pharmacyLocation
+      ? [{ id: pharmacyLocation.id, name: `${pharmacyLocation.name} (needs approval)`, isPharmacy: true }, ...subs]
+      : subs;
+  }, [settings.subStockLocations, pharmacyLocation]);
 
   const [destId, setDestId] = useState('');
   const [qty, setQty] = useState('');
   const [saving, setSaving] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
 
-  // Reset every time the sheet opens for a (possibly different) item.
   useEffect(() => {
     if (visible) {
-      setDestId(locations.length === 1 ? locations[0].id : '');
+      setDestId(destinations.length === 1 ? destinations[0].id : '');
       setQty('');
       setSaving(false);
       setPickerOpen(false);
     }
-    // locations intentionally excluded — only re-init on open / item change
+    // destinations intentionally excluded — only re-init on open / item change
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, item?.id]);
 
   const available = Math.max(0, Number(item?.stock) || 0);
-  const dest = locations.find((l) => l.id === destId) || null;
+  const dest = destinations.find((l) => l.id === destId) || null;
+  const toPharmacy = !!dest?.isPharmacy;
   const qNum = parseInt(qty, 10) || 0;
   const exceeds = qNum > available;
   const canMove = !!destId && qNum > 0 && !exceeds && !saving;
@@ -51,32 +58,48 @@ export default function MoveStockModal({ visible, item, onClose }) {
     }
     setSaving(true);
     try {
-      const res = await createTransferOrder({
-        toLocationId: destId,
-        toLocationName: dest?.name || '',
-        transferDate: new Date().toISOString().slice(0, 10),
-        notes: `Move Stock (mobile): ${qNum} × ${item.name}${item.batch ? ` [batch ${item.batch}]` : ''} → ${dest?.name || ''}`,
-        items: [{
-          mainStockId: item.id,
-          name: item.name || '',
-          batch: item.batch || '',
-          expiry: item.expiry || '',
-          mrp: item.mrp || 0,
-          netRate: item.netRate || 0,
-          qty: qNum,
-        }],
-      });
-      if (res && res.ok) {
-        Alert.alert(
-          'Stock moved',
-          `${qNum} unit(s) of "${item.name}" moved to ${dest?.name || 'the selected location'}.\n\n` +
-            `Main Stock: ${available} → ${available - qNum} unit(s).`,
-        );
-        onClose();
+      const line = {
+        mainStockId: item.id,
+        name: item.name || '',
+        batch: item.batch || '',
+        expiry: item.expiry || '',
+        mrp: item.mrp || 0,
+        netRate: item.netRate || 0,
+        qty: qNum,
+      };
+      if (toPharmacy) {
+        const res = await createPharmacyTransferRequest({
+          transferDate: new Date().toISOString().slice(0, 10),
+          notes: `Move Stock (mobile): ${qNum} × ${item.name}${item.batch ? ` [batch ${item.batch}]` : ''} → ${pharmacyLocation?.name || 'Pharmacy'}`,
+          items: [line],
+        });
+        if (res && res.ok) {
+          Alert.alert(
+            'Pending transfer created',
+            `${qNum} unit(s) of "${item.name}" are now pending for ${pharmacyLocation?.name || 'the Pharmacy'}.\n\n` +
+              'Pharmacy Inventory is NOT changed yet — open "Pending Stock Transfers" to approve it after you receive the stock.',
+          );
+          onClose();
+        }
+      } else {
+        const res = await createTransferOrder({
+          toLocationId: destId,
+          toLocationName: dest?.name || '',
+          transferDate: new Date().toISOString().slice(0, 10),
+          notes: `Move Stock (mobile): ${qNum} × ${item.name}${item.batch ? ` [batch ${item.batch}]` : ''} → ${dest?.name || ''}`,
+          items: [line],
+        });
+        if (res && res.ok) {
+          Alert.alert(
+            'Stock moved',
+            `${qNum} unit(s) of "${item.name}" moved to ${dest?.name || 'the selected location'}.\n\n` +
+              `Main Stock: ${available} → ${available - qNum} unit(s).`,
+          );
+          onClose();
+        }
       }
     } catch {
-      // createTransferOrder already surfaced the exact error via an alert
-      // (e.g. "no longer has N in stock"). Leave the sheet open to retry.
+      // the context already surfaced the exact error via an alert; leave open to retry
     } finally {
       setSaving(false);
     }
@@ -102,9 +125,15 @@ export default function MoveStockModal({ visible, item, onClose }) {
           <Text style={styles.label}>Destination *</Text>
           <AnimatedPressable style={styles.picker} onPress={() => setPickerOpen(true)}>
             <Text style={dest ? styles.pickerText : styles.pickerPlaceholder}>
-              {dest ? dest.name : locations.length ? 'Select a clinic / sub-stock location…' : 'No sub-stock locations configured'}
+              {dest ? dest.name : destinations.length ? 'Select a clinic / sub-stock location…' : 'No destinations configured'}
             </Text>
           </AnimatedPressable>
+          {toPharmacy ? (
+            <Text style={styles.pendingHint}>
+              Moving to the Pharmacy creates a <Text style={styles.pendingHintStrong}>pending transfer</Text>. Pharmacy
+              Inventory is only updated after you approve it in “Pending Stock Transfers”.
+            </Text>
+          ) : null}
 
           <FormField
             label="Quantity to move *"
@@ -121,7 +150,9 @@ export default function MoveStockModal({ visible, item, onClose }) {
             <Text style={styles.cancelBtnText}>Cancel</Text>
           </AnimatedPressable>
           <AnimatedPressable style={[styles.moveBtn, !canMove && styles.moveBtnDisabled]} onPress={submit} disabled={!canMove}>
-            <Text style={styles.moveBtnText}>{saving ? 'Moving…' : 'Move Stock'}</Text>
+            <Text style={styles.moveBtnText}>
+              {saving ? 'Working…' : toPharmacy ? 'Request Transfer' : 'Move Stock'}
+            </Text>
           </AnimatedPressable>
         </View>
       </Screen>
@@ -129,7 +160,7 @@ export default function MoveStockModal({ visible, item, onClose }) {
       <SelectModal
         visible={pickerOpen}
         title="Select Destination"
-        options={locations}
+        options={destinations}
         renderLabel={(l) => l.name}
         onSelect={(l) => { setDestId(l.id); setPickerOpen(false); }}
         onClose={() => setPickerOpen(false)}
@@ -149,10 +180,12 @@ const makeStyles = (t) => StyleSheet.create({
   label: { color: t.muted, fontSize: 12, marginBottom: 6, fontWeight: '600' },
   picker: {
     backgroundColor: t.panel, borderWidth: 1, borderColor: t.panelBorder, borderRadius: 12,
-    paddingHorizontal: 14, paddingVertical: 14, marginBottom: 14,
+    paddingHorizontal: 14, paddingVertical: 14, marginBottom: 12,
   },
   pickerText: { color: t.text, fontSize: 15 },
   pickerPlaceholder: { color: t.muted, fontSize: 15 },
+  pendingHint: { color: t.muted, fontSize: 12, lineHeight: 17, marginBottom: 14 },
+  pendingHintStrong: { color: t.warning, fontWeight: '800' },
   errorText: { color: t.danger, fontSize: 12, marginTop: -4 },
   footer: {
     flexDirection: 'row', gap: 14,
