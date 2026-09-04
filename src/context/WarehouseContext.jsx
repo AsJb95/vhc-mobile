@@ -2,6 +2,25 @@ import { createContext, useContext, useState, useEffect, useCallback, useRef, us
 import { Alert } from 'react-native';
 import { supabase } from '../lib/supabaseClient';
 import { findPharmacyLocation } from '../lib/locations';
+import { planPharmacyTransferLines } from '../lib/transfers';
+import { useAuth } from './AuthContext';
+
+// Whether transfer_orders.created_by / approved_by / cancelled_by(+_at) exist on
+// the live database (migration 20260904000100_transfer_created_by.sql). Probed
+// once so every insert/update can adapt — the app works fully before the
+// migration has been applied (those audit fields are simply omitted).
+let transferAuditColsSupported = false;
+let transferAuditColsChecked = false;
+async function ensureTransferAuditColsChecked() {
+  if (transferAuditColsChecked) return;
+  transferAuditColsChecked = true;
+  try {
+    const { error } = await supabase.from('transfer_orders').select('created_by').limit(1);
+    transferAuditColsSupported = !error;
+  } catch {
+    transferAuditColsSupported = false;
+  }
+}
 
 function withErrorAlert(fn) {
   return async (...args) => {
@@ -75,6 +94,11 @@ function mapTransferOrderRow(to, locs) {
     notes: to.notes,
     status: to.status,
     createdAt: to.created_at,
+    createdBy: to.created_by || null,
+    approvedBy: to.approved_by || null,
+    approvedAt: to.approved_at || null,
+    cancelledBy: to.cancelled_by || null,
+    cancelledAt: to.cancelled_at || null,
     items: (to.transfer_order_items || []).map((i) => ({
       mainStockId: i.item_id, name: i.name, batch: i.batch_no, expiry: i.expiry_date, mrp: i.mrp, netRate: i.net_rate, qty: i.qty,
     })),
@@ -93,6 +117,9 @@ export function appendDedupById(prev, next) {
 const WarehouseContext = createContext(null);
 
 export function WarehouseProvider({ children }) {
+  // Current signed-in user — stamped onto transfer audit columns (created_by /
+  // approved_by / cancelled_by). AuthProvider wraps WarehouseProvider in App.js.
+  const { user } = useAuth();
   const [locations, setLocations] = useState([]);
   const [mainStock, setMainStock] = useState([]);
   const [subStocks, setSubStocks] = useState({});
@@ -288,6 +315,7 @@ export function WarehouseProvider({ children }) {
       setLoading(true);
       setLoadError(null);
       try {
+        await ensureTransferAuditColsChecked();
         await fetchAll();
       } catch (e) {
         console.error('Warehouse data load failed:', e);
@@ -353,7 +381,7 @@ export function WarehouseProvider({ children }) {
   // exists with an EDIT/ADJUST type and an insert policy for warehouse/pharmacy
   // writers; the Pharmacy POS writes EDIT rows the same way. Never fails the
   // underlying edit — a missing ledger row must not block a stock correction.
-  async function logStockMovement({ itemId, locationId, batchNo, type, opening, closing, reason }) {
+  async function logStockMovement({ itemId, locationId, batchNo, type, opening, closing, reason, createdBy }) {
     if (!itemId || opening == null || closing == null) return;
     try {
       await supabase.from('stock_movements').insert({
@@ -365,6 +393,7 @@ export function WarehouseProvider({ children }) {
         opening,
         closing,
         reason: reason || 'Mobile stock correction',
+        ...(createdBy ? { created_by: createdBy } : {}),
       });
     } catch (e) {
       console.warn('stock_movements ledger write skipped:', e?.message || e);
@@ -771,21 +800,52 @@ export function WarehouseProvider({ children }) {
   }
 
   // ---- Warehouse -> Pharmacy: manual-approval transfers ----
-  // WAREHOUSE STOCK != PHARMACY INVENTORY. A move to the pharmacy_counter is
-  // recorded as a 'Pending' transfer_orders row and touches NO stock_batches
-  // until the user approves it here. transfer_number is the unique tracking id;
+  // WAREHOUSE STOCK != PHARMACY INVENTORY. Moving stock to the pharmacy_counter
+  // reserves it out of Main Stock immediately (same as any Move Stock) and
+  // records a 'Pending' transfer_orders row. Pharmacy Inventory is NOT touched
+  // until someone approves the row. transfer_number is the unique tracking id;
   // transfer_orders/_items rows are the audit trail and are never deleted —
-  // approve/cancel only change status.
+  // approve / cancel only change status. Cancel returns the reserved qty to
+  // Main Stock.
+
+  // Add `qty` to the item's batch at `locationId` (compare-and-set bump, or a
+  // fresh batch row if none exists). Used by approve (into Pharmacy) and cancel
+  // (back into Main).
+  async function addQtyToBatch({ itemId, locationId, batch, qty, expiry, mrp, netRate, gst, stockist }) {
+    const { data: row, error: readErr } = await batchEq(
+      supabase.from('stock_batches').select('id, qty').eq('item_id', itemId).eq('location_id', locationId),
+      batch,
+    ).maybeSingle();
+    if (readErr) throw readErr;
+    if (row) {
+      const before = row.qty || 0;
+      await bumpBatchQty(row.id, qty);
+      return { before, after: before + qty };
+    }
+    const { error: insErr } = await supabase.from('stock_batches').insert({
+      item_id: itemId, location_id: locationId, batch_no: batch || null,
+      expiry_date: expiry || null, mrp: mrp ?? null, net_rate: netRate ?? null,
+      gst: gst ?? null, stockist: stockist ?? null, qty,
+    });
+    if (insErr) throw insErr;
+    return { before: 0, after: qty };
+  }
 
   async function createPharmacyTransferRequest(order) {
     const mainId = mainLocationId();
     const pharmId = pharmacyLocationId();
     if (!pharmId) throw new Error('No pharmacy_counter location is configured.');
 
+    // Validate + resolve identity against the current Main Stock snapshot before
+    // creating anything (pure, tested in src/lib/transfers.js).
+    const { lines, error: planErr } = planPharmacyTransferLines(mainStock, order.items);
+    if (planErr) throw new Error(planErr);
+
     let transferNumber = await generateTransferNumber();
     const insertReq = (num) => supabase.from('transfer_orders').insert({
       transfer_number: num, from_location_id: mainId, to_location_id: pharmId,
       transfer_date: order.transferDate || null, notes: order.notes || null, status: 'Pending',
+      ...(transferAuditColsSupported && user?.id ? { created_by: user.id } : {}),
     }).select().single();
 
     let { data: reqRow, error } = await insertReq(transferNumber);
@@ -795,63 +855,73 @@ export function WarehouseProvider({ children }) {
     }
     if (error) throw error;
 
-    const lineRows = (order.items || [])
-      .map((line) => {
-        const src = mainStock.find((i) => i.id === line.mainStockId);
-        const qty = Math.max(0, line.qty || 0);
-        if (!src || qty === 0) return null;
-        return {
-          transfer_order_id: reqRow.id, item_id: src.itemId, name: line.name || src.name,
-          batch_no: line.batch || src.batch || null, expiry_date: line.expiry || src.expiry || null,
-          mrp: line.mrp ?? src.mrp, net_rate: line.netRate ?? src.netRate, qty,
-        };
-      })
-      .filter(Boolean);
-    if (lineRows.length === 0) {
-      // Nothing valid to request — remove the empty header so it can't sit in
-      // the pending list forever.
-      await supabase.from('transfer_orders').delete().eq('id', reqRow.id);
-      throw new Error('Nothing to transfer — the item was not found in Main Stock.');
+    // Per line: reserve out of Main Stock FIRST (compare-and-set, clamped >= 0),
+    // then record the line. If a concurrent change makes the CAS lose, abort
+    // before writing that line — earlier lines stay consistent and the Pending
+    // row can be cancelled to return whatever was already reserved. If the very
+    // first line fails, delete the empty header so it can't sit in the list.
+    let linesCommitted = 0;
+    const abort = async (msg) => {
+      if (linesCommitted === 0) {
+        await supabase.from('transfer_orders').delete().eq('id', reqRow.id).catch(() => {});
+      }
+      await fetchAll().catch(() => {});
+      throw new Error(msg);
+    };
+    for (const line of lines) {
+      const expected = line.sourceQty;
+      if (expected < line.qty) {
+        await abort(`"${line.name}" no longer has ${line.qty} in Main Stock (only ${expected}).${linesCommitted ? ' Some lines are reserved — cancel this transfer to release them.' : ''}`);
+      }
+      const { data: srcUpd, error: srcErr } = await supabase
+        .from('stock_batches')
+        .update({ qty: Math.max(0, expected - line.qty) })
+        .eq('id', line.sourceBatchId)
+        .eq('qty', expected)
+        .select('id');
+      if (srcErr) throw srcErr;
+      if (!srcUpd || srcUpd.length === 0) {
+        await abort(`"${line.name}" stock changed while requesting the transfer.${linesCommitted ? ' Some lines are reserved — cancel this transfer to release them.' : ''}`);
+      }
+
+      const { error: lineErr } = await supabase.from('transfer_order_items').insert({
+        transfer_order_id: reqRow.id, item_id: line.itemId, name: line.name,
+        batch_no: line.batch, expiry_date: line.expiry, mrp: line.mrp, net_rate: line.netRate, qty: line.qty,
+      });
+      if (lineErr) throw lineErr;
+      linesCommitted += 1;
+
+      logStockMovement({
+        itemId: line.itemId, locationId: mainId, batchNo: line.batch, type: 'TRANSFER',
+        opening: expected, closing: Math.max(0, expected - line.qty),
+        reason: `Pharmacy transfer ${transferNumber} requested (reserved from Main)`,
+        createdBy: user?.id,
+      });
     }
-    const { error: linesErr } = await supabase.from('transfer_order_items').insert(lineRows);
-    if (linesErr) throw linesErr;
 
     await fetchAll();
     return { ok: true, pending: true, transferNumber };
   }
 
   // Approve: claim the row (status Pending -> Completed via compare-and-set),
-  // then move stock for real — deduct Main Stock, add to Pharmacy Inventory,
-  // batch-matched. The status claim is the single guard against a double
-  // approval / a cancelled row being approved.
+  // then ADD the reserved quantity into Pharmacy Inventory, batch-matched. The
+  // Main-Stock deduction already happened when the request was created, so
+  // approval never touches Main. The status claim is the single guard against a
+  // double approval or approving a cancelled row.
   async function approvePharmacyTransfer(transferId) {
     const t = transferOrders.find((x) => x.id === transferId);
     if (!t) throw new Error('Transfer not found — refresh and try again.');
     if (t.status !== 'Pending') throw new Error(`This transfer is already "${t.status}".`);
 
-    const mainId = mainLocationId();
     const pharmId = t.toLocationId || pharmacyLocationId();
+    if (!pharmId) throw new Error('No pharmacy_counter location is configured.');
 
-    // Friendly pre-check against a live read of every source batch.
-    const sources = [];
-    for (const line of t.items) {
-      const qty = Math.max(0, line.qty || 0);
-      const { data: src, error: srcErr } = await batchEq(
-        supabase.from('stock_batches').select('id, qty, gst, stockist').eq('item_id', line.mainStockId).eq('location_id', mainId),
-        line.batch,
-      ).maybeSingle();
-      if (srcErr) throw srcErr;
-      if (!src || (src.qty || 0) < qty) {
-        await fetchAll().catch(() => {});
-        throw new Error(`Main Stock for "${line.name}" changed — only ${src?.qty || 0} available (need ${qty}). Approval blocked; refresh and verify.`);
-      }
-      sources.push({ line, qty, src });
-    }
-
-    // Claim the transfer. If this lands 0 rows someone else already approved or
-    // cancelled it — never apply the stock twice.
     const { data: claimed, error: claimErr } = await supabase
-      .from('transfer_orders').update({ status: 'Completed' })
+      .from('transfer_orders')
+      .update({
+        status: 'Completed',
+        ...(transferAuditColsSupported ? { approved_by: user?.id || null, approved_at: new Date().toISOString() } : {}),
+      })
       .eq('id', transferId).eq('status', 'Pending').select('id');
     if (claimErr) throw claimErr;
     if (!claimed || claimed.length === 0) {
@@ -860,29 +930,20 @@ export function WarehouseProvider({ children }) {
     }
 
     const problems = [];
-    for (const { line, qty, src } of sources) {
+    for (const line of t.items) {
+      const qty = Math.max(0, line.qty || 0);
+      if (qty === 0) continue;
       try {
-        await setBatchQtyGuarded(src.id, src.qty || 0, Math.max(0, (src.qty || 0) - qty));
-        logStockMovement({ itemId: line.mainStockId, locationId: mainId, batchNo: line.batch, type: 'ADJUST', opening: src.qty || 0, closing: Math.max(0, (src.qty || 0) - qty), reason: `Pharmacy transfer ${t.transferNumber} approved (out)` });
-
-        const { data: dest, error: destErr } = await batchEq(
-          supabase.from('stock_batches').select('id, qty').eq('item_id', line.mainStockId).eq('location_id', pharmId),
-          line.batch,
-        ).maybeSingle();
-        if (destErr) throw destErr;
-        if (dest) {
-          const before = dest.qty || 0;
-          await bumpBatchQty(dest.id, qty);
-          logStockMovement({ itemId: line.mainStockId, locationId: pharmId, batchNo: line.batch, type: 'ADJUST', opening: before, closing: before + qty, reason: `Pharmacy transfer ${t.transferNumber} approved (in)` });
-        } else {
-          const { error: insErr } = await supabase.from('stock_batches').insert({
-            item_id: line.mainStockId, location_id: pharmId, batch_no: line.batch || null,
-            expiry_date: line.expiry || null, mrp: line.mrp, net_rate: line.netRate,
-            gst: src.gst ?? null, stockist: src.stockist ?? null, qty,
-          });
-          if (insErr) throw insErr;
-          logStockMovement({ itemId: line.mainStockId, locationId: pharmId, batchNo: line.batch, type: 'ADJUST', opening: 0, closing: qty, reason: `Pharmacy transfer ${t.transferNumber} approved (in, new batch)` });
-        }
+        const { before, after } = await addQtyToBatch({
+          itemId: line.mainStockId, locationId: pharmId, batch: line.batch, qty,
+          expiry: line.expiry, mrp: line.mrp, netRate: line.netRate,
+        });
+        logStockMovement({
+          itemId: line.mainStockId, locationId: pharmId, batchNo: line.batch, type: 'TRANSFER',
+          opening: before, closing: after,
+          reason: `Pharmacy transfer ${t.transferNumber} approved (into Pharmacy)`,
+          createdBy: user?.id,
+        });
       } catch (e) {
         problems.push(`${line.name}: ${e.message || e}`);
       }
@@ -895,20 +956,51 @@ export function WarehouseProvider({ children }) {
     return { ok: true, transferNumber: t.transferNumber };
   }
 
-  // Cancel: pure status change (Pending -> Cancelled). No stock ever moved for a
-  // pending transfer, so nothing to unwind. The row is kept as an audit record.
+  // Cancel: claim the row (status Pending -> Cancelled), then RETURN each
+  // reserved quantity to its Main Stock batch. Pharmacy Inventory is never
+  // touched. The row is kept as an audit record (never deleted).
   async function cancelPharmacyTransfer(transferId) {
     const t = transferOrders.find((x) => x.id === transferId);
     if (t && t.status !== 'Pending') throw new Error(`This transfer is already "${t.status}".`);
+
+    const mainId = mainLocationId();
     const { data, error } = await supabase
-      .from('transfer_orders').update({ status: 'Cancelled' })
+      .from('transfer_orders')
+      .update({
+        status: 'Cancelled',
+        ...(transferAuditColsSupported ? { cancelled_by: user?.id || null, cancelled_at: new Date().toISOString() } : {}),
+      })
       .eq('id', transferId).eq('status', 'Pending').select('id');
     if (error) throw error;
     if (!data || data.length === 0) {
       await fetchAll().catch(() => {});
       throw new Error('This transfer can no longer be cancelled (it was already approved or cancelled).');
     }
+
+    const problems = [];
+    for (const line of (t?.items || [])) {
+      const qty = Math.max(0, line.qty || 0);
+      if (qty === 0) continue;
+      try {
+        const { before, after } = await addQtyToBatch({
+          itemId: line.mainStockId, locationId: mainId, batch: line.batch, qty,
+          expiry: line.expiry, mrp: line.mrp, netRate: line.netRate,
+        });
+        logStockMovement({
+          itemId: line.mainStockId, locationId: mainId, batchNo: line.batch, type: 'TRANSFER',
+          opening: before, closing: after,
+          reason: `Pharmacy transfer ${t.transferNumber} cancelled (returned to Main Stock)`,
+          createdBy: user?.id,
+        });
+      } catch (e) {
+        problems.push(`${line.name}: ${e.message || e}`);
+      }
+    }
+
     await fetchAll();
+    if (problems.length) {
+      throw new Error(`Transfer marked Cancelled, but returning some lines to Main Stock needs checking:\n${problems.join('\n')}`);
+    }
     return { ok: true };
   }
 

@@ -9,7 +9,8 @@ import { useThemedStyles } from '../theme/useThemedStyles';
 import { Card, Badge, EmptyState, ScreenLoading, AnimatedPressable, Screen } from '../components/UI';
 import CreatePOModal from '../components/CreatePOModal';
 import CreateTransferModal from '../components/CreateTransferModal';
-import { formatCurrency, formatDate } from '../lib/format';
+import { formatCurrency, formatDate, formatDateTime } from '../lib/format';
+import { transferStatusColor, TRANSFER_STATUS_FILTERS, filterTransfersByStatus } from '../lib/transfers';
 
 function poStatusColor(status, t) {
   if (status === 'Received') return t.success;
@@ -20,13 +21,15 @@ function poStatusColor(status, t) {
 export default function OrdersScreen() {
   const {
     purchaseOrders, transferOrders, receivePurchaseOrder, cancelPurchaseOrder,
+    approvePharmacyTransfer, cancelPharmacyTransfer,
     loading, refreshing, refresh,
     poHasMore, toHasMore, loadMorePurchaseOrders, loadMoreTransferOrders,
   } = useWarehouse();
-  const { canWriteWarehouse } = useAuth();
+  const { canWriteWarehouse, user } = useAuth();
   const { theme } = useTheme();
   const styles = useThemedStyles(makeStyles);
   const [mode, setMode] = useState('po');
+  const [txStatus, setTxStatus] = useState('All'); // transfer status filter
   const [viewOrder, setViewOrder] = useState(null);
   const [createOpen, setCreateOpen] = useState(false);
 
@@ -46,7 +49,30 @@ export default function OrdersScreen() {
     ]);
   }
 
-  const data = mode === 'po' ? purchaseOrders : transferOrders;
+  function confirmApproveTransfer(t) {
+    const lines = t.items.map((i) => `• ${i.name} ×${i.qty}${i.batch ? ` (batch ${i.batch})` : ''}`).join('\n');
+    Alert.alert(
+      'Approve transfer?',
+      `${t.transferNumber}\n\n${lines}\n\nThe above is ADDED to Pharmacy Inventory now. Main Stock was already reduced when the transfer was created. This cannot be undone.`,
+      [
+        { text: 'Not yet', style: 'cancel' },
+        { text: 'Approve', onPress: () => { approvePharmacyTransfer(t.id); setViewOrder(null); } },
+      ],
+    );
+  }
+
+  function confirmCancelTransfer(t) {
+    Alert.alert(
+      'Cancel transfer?',
+      `${t.transferNumber} will be marked Cancelled. The reserved quantity is returned to Main Stock. Pharmacy Inventory is not changed. The record stays in Transfer History.`,
+      [
+        { text: 'Keep pending', style: 'cancel' },
+        { text: 'Cancel transfer', style: 'destructive', onPress: () => { cancelPharmacyTransfer(t.id); setViewOrder(null); } },
+      ],
+    );
+  }
+
+  const data = mode === 'po' ? purchaseOrders : filterTransfersByStatus(transferOrders, txStatus);
   const hasMore = mode === 'po' ? poHasMore : toHasMore;
   const onEndReached = mode === 'po' ? loadMorePurchaseOrders : loadMoreTransferOrders;
 
@@ -62,6 +88,20 @@ export default function OrdersScreen() {
             <Text style={[styles.segText, mode === 'transfer' && styles.segTextActive]}>Transfers</Text>
           </AnimatedPressable>
         </View>
+
+        {mode === 'transfer' && (
+          <View style={styles.filterRow}>
+            {TRANSFER_STATUS_FILTERS.map((s) => (
+              <AnimatedPressable
+                key={s}
+                style={[styles.filterChip, txStatus === s && styles.filterChipActive]}
+                onPress={() => setTxStatus(s)}
+              >
+                <Text style={[styles.filterChipText, txStatus === s && styles.filterChipTextActive]}>{s}</Text>
+              </AnimatedPressable>
+            ))}
+          </View>
+        )}
       </View>
 
       <FlatList
@@ -82,9 +122,7 @@ export default function OrdersScreen() {
                   <Badge label={item.status} color={poStatusColor(item.status, theme)} />
                 ) : (
                   <View style={{ flexDirection: 'row', gap: 6 }}>
-                    {item.status && item.status !== 'Completed' ? (
-                      <Badge label={item.status} color={item.status === 'Pending' ? theme.warning : theme.danger} />
-                    ) : null}
+                    <Badge label={item.status || 'Completed'} color={transferStatusColor(item.status, theme)} />
                     <Badge label={item.toLocationName} color={theme.accent} />
                   </View>
                 )}
@@ -109,17 +147,36 @@ export default function OrdersScreen() {
           <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 32 }}>
             {viewOrder && (
               <MotiView from={{ opacity: 0, translateY: 16 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 280 }}>
-                <Text style={styles.modalTitle}>{viewOrder.mode === 'po' ? viewOrder.poNumber : viewOrder.transferNumber}</Text>
-                <Text style={styles.itemMeta}>
-                  {viewOrder.mode === 'po' ? `Supplier: ${viewOrder.supplier}` : `To: ${viewOrder.toLocationName}`}
-                </Text>
+                <View style={styles.modalTitleRow}>
+                  <Text style={styles.modalTitle}>{viewOrder.mode === 'po' ? viewOrder.poNumber : viewOrder.transferNumber}</Text>
+                  <Badge
+                    label={viewOrder.mode === 'po' ? viewOrder.status : (viewOrder.status || 'Completed')}
+                    color={viewOrder.mode === 'po' ? poStatusColor(viewOrder.status, theme) : transferStatusColor(viewOrder.status, theme)}
+                  />
+                </View>
+
+                {viewOrder.mode === 'po' ? (
+                  <Text style={styles.itemMeta}>Supplier: {viewOrder.supplier}</Text>
+                ) : (
+                  <>
+                    <Text style={styles.itemMeta}>
+                      {viewOrder.fromLocationName || 'Main Warehouse'}  →  {viewOrder.toLocationName}
+                    </Text>
+                    <Text style={styles.itemMeta}>Created: {formatDateTime(viewOrder.createdAt)}</Text>
+                    {viewOrder.createdBy && user?.id && viewOrder.createdBy === user.id ? (
+                      <Text style={styles.itemMeta}>Requested by you</Text>
+                    ) : null}
+                  </>
+                )}
                 {viewOrder.notes ? <Text style={styles.itemMeta}>Notes: {viewOrder.notes}</Text> : null}
 
                 <View style={{ marginTop: 16 }}>
                   {viewOrder.items.map((line, idx) => (
                     <Card key={idx} index={idx} style={{ marginBottom: 8 }}>
                       <Text style={styles.itemName}>{line.name}</Text>
-                      <Text style={styles.itemMeta}>Batch {line.batch || '—'} · Qty {line.qty} · {formatCurrency(line.netRate)}</Text>
+                      <Text style={styles.itemMeta}>
+                        Batch {line.batch || '—'}{line.expiry ? ` · Exp ${formatDate(line.expiry)}` : ''} · Qty {line.qty} · {formatCurrency(line.netRate)}
+                      </Text>
                     </Card>
                   ))}
                 </View>
@@ -139,6 +196,17 @@ export default function OrdersScreen() {
                     </AnimatedPressable>
                     <AnimatedPressable style={styles.cancelBtn} onPress={() => confirmCancel(viewOrder)}>
                       <Text style={styles.actionBtnText}>Cancel PO</Text>
+                    </AnimatedPressable>
+                  </View>
+                )}
+
+                {viewOrder.mode === 'transfer' && viewOrder.status === 'Pending' && canWriteWarehouse && (
+                  <View style={styles.actionRow}>
+                    <AnimatedPressable style={styles.receiveBtn} onPress={() => confirmApproveTransfer(viewOrder)}>
+                      <Text style={styles.actionBtnText}>Approve — update Pharmacy</Text>
+                    </AnimatedPressable>
+                    <AnimatedPressable style={styles.cancelBtn} onPress={() => confirmCancelTransfer(viewOrder)}>
+                      <Text style={styles.actionBtnText}>Cancel Transfer</Text>
                     </AnimatedPressable>
                   </View>
                 )}
@@ -166,6 +234,14 @@ const makeStyles = (t) => StyleSheet.create({
   segBtnActive: { backgroundColor: t.accent },
   segText: { color: t.muted, fontSize: 13 },
   segTextActive: { color: t.onAccent, fontWeight: '600' },
+  filterRow: { flexDirection: 'row', gap: 8, marginTop: 10, flexWrap: 'wrap' },
+  filterChip: {
+    paddingHorizontal: 12, height: 30, borderRadius: 15, borderWidth: 1, borderColor: t.panelBorder,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  filterChipActive: { backgroundColor: t.accent, borderColor: t.accent },
+  filterChipText: { color: t.muted, fontSize: 12, fontWeight: '600' },
+  filterChipTextActive: { color: t.onAccent },
   list: { padding: 16, paddingTop: 8, paddingBottom: 32 },
   footerLoader: { paddingVertical: 20 },
   itemCard: { marginBottom: 10 },
@@ -173,11 +249,12 @@ const makeStyles = (t) => StyleSheet.create({
   itemName: { color: t.text, fontWeight: '600', fontSize: 15 },
   itemMeta: { color: t.muted, fontSize: 12, marginTop: 2 },
   modalContainer: { flex: 1, backgroundColor: t.bg },
-  modalTitle: { color: t.text, fontSize: 20, fontWeight: '700', marginBottom: 8 },
+  modalTitleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  modalTitle: { color: t.text, fontSize: 20, fontWeight: '700' },
   actionRow: { flexDirection: 'row', gap: 10, marginTop: 16 },
   receiveBtn: { flex: 1, backgroundColor: t.success, borderRadius: 12, paddingVertical: 12, alignItems: 'center', marginRight: 10 },
   cancelBtn: { flex: 1, backgroundColor: t.danger, borderRadius: 12, paddingVertical: 12, alignItems: 'center' },
-  actionBtnText: { color: t.onAccent, fontWeight: '700' },
+  actionBtnText: { color: t.onAccent, fontWeight: '700', textAlign: 'center' },
   closeBtn: { padding: 16, alignItems: 'center', borderTopWidth: 1, borderTopColor: t.panelBorder },
   closeBtnText: { color: t.accent, fontWeight: '600' },
   fab: {
