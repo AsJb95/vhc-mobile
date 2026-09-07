@@ -1,22 +1,38 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ScrollView, View, Text, StyleSheet, RefreshControl, ActivityIndicator } from 'react-native';
+import { ScrollView, View, Text, TextInput, StyleSheet, RefreshControl, ActivityIndicator } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import { useWarehouse } from '../context/WarehouseContext';
 import { usePharmacy } from '../context/PharmacyContext';
 import { useTheme } from '../context/ThemeContext';
 import { useThemedStyles } from '../theme/useThemedStyles';
+import { useDebouncedValue } from '../lib/useDebouncedValue';
 import { Card, Screen, ScreenLoading } from '../components/UI';
 import { FormField } from '../components/FormField';
 import { KeyVal, SectionTitle, ChipTabs, AsOf } from '../components/Bits';
 import { formatCurrency, formatDate } from '../lib/format';
 import {
-  REPORT_PERIODS, periodRange, filterSalesByRange, summarizeSales, buildCostLookup, compareSummaries, PAYMENT_BUCKETS,
+  REPORT_PERIODS, periodRange, filterSalesByRange, summarizeSales, compareSummaries, PAYMENT_BUCKETS, paymentBucket,
 } from '../lib/pharmacyReports';
 
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
+const BILL_TYPES = ['All', ...PAYMENT_BUCKETS]; // All / Cash / UPI / Card / Credit
+
+// Applies the patient-name and bill-type filters to a set of sales — both are
+// plain in-memory predicates over data already fetched for the period, so no
+// extra query runs.
+function applyReportFilters(sales, patientTerm, billType) {
+  let out = sales || [];
+  const p = (patientTerm || '').trim().toLowerCase();
+  if (p) {
+    out = out.filter((s) => (s.patient_name || s.patientName || '').toLowerCase().includes(p)
+      || (s.bill_id || s.billId || '').toLowerCase().includes(p));
+  }
+  if (billType && billType !== 'All') {
+    out = out.filter((s) => paymentBucket(s.payment_mode ?? s.paymentMode) === billType);
+  }
+  return out;
+}
 
 export default function SalesReportsScreen() {
-  const { pharmacyStock } = useWarehouse();
   const { recentSales, asOf, loading, refreshing, refresh, fetchSalesRange, loadError } = usePharmacy();
   const { theme } = useTheme();
   const styles = useThemedStyles(makeStyles);
@@ -27,15 +43,13 @@ export default function SalesReportsScreen() {
   const [customTo, setCustomTo] = useState('');
   const [rangeResult, setRangeResult] = useState(null); // { sales } | { error } for custom / older
   const [rangeLoading, setRangeLoading] = useState(false);
+  const [patientQuery, setPatientQuery] = useState('');
+  const debouncedPatient = useDebouncedValue(patientQuery, 250);
+  const [billType, setBillType] = useState('All');
 
-  // Reset to Today every time this screen gains focus — not just on first mount. This
-  // screen lives inside a Tab Navigator's stack, which (by design, to preserve scroll
-  // position etc.) keeps screens mounted when you switch tabs rather than destroying them,
-  // so useState('today') above only ever applies once, the very first time the screen is
-  // ever opened. Without this, whatever period was selected on a previous visit silently
-  // became the new "default" the moment the user switched tabs and came back — the exact
-  // behavior this fix removes. Custom date/range fields are cleared too, so a stale custom
-  // selection can't reappear as soon as the picker is reopened.
+  // Reset to Today (and clear the report filters) every time this screen gains
+  // focus — see the long note in the previous version: Tab Navigator keeps the
+  // screen mounted, so useState defaults only apply on first ever open.
   useFocusEffect(
     useCallback(() => {
       setPeriod('today');
@@ -43,13 +57,11 @@ export default function SalesReportsScreen() {
       setCustomFrom('');
       setCustomTo('');
       setRangeResult(null);
+      setPatientQuery('');
+      setBillType('All');
     }, []),
   );
 
-  const costLookup = useMemo(() => buildCostLookup(pharmacyStock), [pharmacyStock]);
-
-  // The oldest bill we currently hold live — used to decide whether a period
-  // is fully covered by the rolling cache or needs a direct query.
   const oldestCached = useMemo(() => {
     let min = Infinity;
     for (const s of recentSales) {
@@ -71,7 +83,6 @@ export default function SalesReportsScreen() {
     return oldestCached != null && range.from.getTime() < oldestCached;
   }, [range, period, oldestCached]);
 
-  // Fetch custom / older ranges on demand — never merged into the live cache.
   useEffect(() => {
     let cancelled = false;
     if (!range || !needsDirectQuery) { setRangeResult(null); return; }
@@ -88,32 +99,40 @@ export default function SalesReportsScreen() {
     return filterSalesByRange(recentSales, range.from, range.to);
   }, [range, needsDirectQuery, rangeResult, recentSales]);
 
+  // Period sales narrowed by the on-screen patient / bill-type filters.
+  const filteredSales = useMemo(
+    () => (salesForPeriod ? applyReportFilters(salesForPeriod, debouncedPatient, billType) : null),
+    [salesForPeriod, debouncedPatient, billType],
+  );
+  const filtersActive = debouncedPatient.trim() !== '' || billType !== 'All';
+
   const summary = useMemo(
-    () => (salesForPeriod ? summarizeSales(salesForPeriod, costLookup) : null),
-    [salesForPeriod, costLookup],
+    () => (filteredSales ? summarizeSales(filteredSales, null) : null),
+    [filteredSales],
   );
 
-  // Month-over-month: only when both months are backed by real data.
+  // Month-over-month: sales vs bills only (no profit). Honours the same filters.
   const monthly = useMemo(() => {
     if (period !== 'thismonth' && period !== 'lastmonth') return null;
     const cur = periodRange('thismonth');
     const prev = periodRange('lastmonth');
     const haveLastMonth = oldestCached != null && oldestCached <= prev.from.getTime();
     if (!haveLastMonth) return { insufficient: true };
-    const curSum = summarizeSales(filterSalesByRange(recentSales, cur.from, cur.to), costLookup);
-    const prevSum = summarizeSales(filterSalesByRange(recentSales, prev.from, prev.to), costLookup);
+    const curSum = summarizeSales(applyReportFilters(filterSalesByRange(recentSales, cur.from, cur.to), debouncedPatient, billType), null);
+    const prevSum = summarizeSales(applyReportFilters(filterSalesByRange(recentSales, prev.from, prev.to), debouncedPatient, billType), null);
     if (prevSum.billCount === 0 && curSum.billCount === 0) return { insufficient: true };
-    return { cmp: compareSummaries(curSum, prevSum), curSum, prevSum };
-  }, [period, recentSales, costLookup, oldestCached]);
+    return { cmp: compareSummaries(curSum, prevSum) };
+  }, [period, recentSales, oldestCached, debouncedPatient, billType]);
 
   if (loading) return <ScreenLoading />;
 
   const busy = rangeLoading && needsDirectQuery;
 
   return (
-    <Screen>
+    <Screen edges={[]}>
       <ScrollView
         contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={theme.accent} />}
       >
         <AsOf at={asOf} />
@@ -133,6 +152,18 @@ export default function SalesReportsScreen() {
           </View>
         )}
 
+        <TextInput
+          style={styles.search}
+          placeholder="Filter by patient name or bill #…"
+          placeholderTextColor={theme.muted}
+          value={patientQuery}
+          onChangeText={setPatientQuery}
+          clearButtonMode="while-editing"
+          returnKeyType="search"
+        />
+        <Text style={styles.filterLabel}>Bill type</Text>
+        <ChipTabs options={BILL_TYPES} value={billType} onChange={setBillType} />
+
         {!range ? (
           <Card style={styles.card}><Text style={styles.muted}>Enter a valid date to run the report.</Text></Card>
         ) : busy ? (
@@ -145,6 +176,7 @@ export default function SalesReportsScreen() {
           <>
             <Text style={styles.periodLabel}>
               {range.label} · {formatDate(range.from)}{range.from.toDateString() !== range.to.toDateString() ? ` – ${formatDate(range.to)}` : ''}
+              {filtersActive ? ' · filtered' : ''}
             </Text>
 
             <Card style={styles.card}>
@@ -162,32 +194,9 @@ export default function SalesReportsScreen() {
               {summary.payments.Other > 0 ? <KeyVal label="Other" value={formatCurrency(summary.payments.Other)} /> : null}
             </Card>
 
-            <Card style={styles.card}>
-              <SectionTitle>Estimated Gross Profit</SectionTitle>
-              {summary.costTotal > 0 ? (
-                <>
-                  <KeyVal
-                    label="Est. gross profit"
-                    value={formatCurrency(summary.estimatedProfit)}
-                    strong
-                    color={summary.estimatedProfit >= 0 ? theme.success : theme.danger}
-                  />
-                  <KeyVal label="Pre-tax revenue (subtotal)" value={formatCurrency(summary.totalSubtotal)} />
-                  <KeyVal label="Cost of goods sold" value={formatCurrency(summary.costTotal)} />
-                  {summary.costUnknownUnits > 0 ? (
-                    <Text style={styles.hint}>
-                      Purchase cost is missing for {summary.costUnknownUnits} sold unit(s) — profit may be understated.
-                    </Text>
-                  ) : (
-                    <Text style={styles.hint}>Based on current batch net-rate cost for every sold unit.</Text>
-                  )}
-                </>
-              ) : (
-                <Text style={styles.muted}>
-                  No reliable cost-price data for this period&apos;s sold items — profit not shown (never estimated).
-                </Text>
-              )}
-            </Card>
+            {summary.billCount === 0 && filtersActive ? (
+              <Card style={styles.card}><Text style={styles.muted}>No bills match the current filters for this period.</Text></Card>
+            ) : null}
 
             {monthly?.insufficient && (
               <Card style={styles.card}>
@@ -200,11 +209,6 @@ export default function SalesReportsScreen() {
                 <SectionTitle>This Month vs Last Month</SectionTitle>
                 <CmpRow label="Sales" c={monthly.cmp.sales} fmt={formatCurrency} />
                 <CmpRow label="Bills" c={monthly.cmp.bills} fmt={(n) => String(n)} />
-                {monthly.cmp.profit.reliable ? (
-                  <CmpRow label="Est. profit" c={monthly.cmp.profit} fmt={formatCurrency} />
-                ) : (
-                  <Text style={styles.hint}>Profit comparison hidden — cost data incomplete in one of the months.</Text>
-                )}
               </Card>
             )}
           </>
@@ -238,10 +242,14 @@ const makeStyles = (t) => StyleSheet.create({
   content: { padding: 16, paddingBottom: 40 },
   error: { color: t.danger, fontSize: 12, marginBottom: 10 },
   muted: { color: t.muted, fontSize: 13 },
-  hint: { color: t.muted, fontSize: 11, marginTop: 8, fontStyle: 'italic' },
   card: { marginBottom: 12 },
   row: { flexDirection: 'row', gap: 10, marginTop: 12 },
   half: { flex: 1 },
+  search: {
+    backgroundColor: t.panel, borderWidth: 1, borderColor: t.panelBorder, borderRadius: 12,
+    color: t.text, paddingHorizontal: 14, paddingVertical: 10, marginTop: 12, marginBottom: 10,
+  },
+  filterLabel: { color: t.muted, fontSize: 12, fontWeight: '600', marginBottom: 6 },
   periodLabel: { color: t.text, fontSize: 13, fontWeight: '700', marginTop: 14, marginBottom: 8 },
   cmpRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', paddingVertical: 8, borderTopWidth: 1, borderTopColor: t.panelBorder },
   cmpLabel: { color: t.text, fontSize: 14, fontWeight: '600' },

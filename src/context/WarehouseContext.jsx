@@ -471,12 +471,17 @@ export function WarehouseProvider({ children }) {
     }
 
     // Not in main stock — search sub-stock locations (e.g. Pharmacy Stock).
+    // The pharmacy counter is written by the POS on every sale, so its qty on
+    // this device goes stale fast. A single absolute compare-and-set would then
+    // fail ("stock changed on the server") and the +/- would appear to do
+    // nothing. bumpBatchQty re-reads the live qty and applies the delta with
+    // bounded retries — the correct semantic for a manual ± nudge ("+1 unit,
+    // whatever the current count").
     for (const locId of Object.keys(subStocks)) {
       const row = subStocks[locId].find((i) => i.id === id);
       if (!row) continue;
       const expected = row.stock || 0;
-      const newQty = Math.max(0, expected + delta);
-      await setBatchQtyGuarded(id, expected, newQty);
+      const newQty = await bumpBatchQty(id, delta);
       setSubStocks((prev) => ({
         ...prev,
         [locId]: prev[locId].map((i) => (i.id === id ? { ...i, stock: newQty } : i)),

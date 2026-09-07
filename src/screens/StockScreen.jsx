@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, FlatList, TextInput, StyleSheet, RefreshControl } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useWarehouse } from '../context/WarehouseContext';
@@ -62,7 +62,9 @@ const StockRow = memo(function StockRow({ item, styles, theme, lowThreshold, can
   );
 });
 
-export default function StockScreen() {
+const ALERT_TO_TAB = { expired: 'expired', expiring: 'expiring', low: 'low', out: 'out' };
+
+export default function StockScreen({ route }) {
   const {
     mainStock, settings, adjustStock, loading, refreshing, refresh, stockTruncated,
     getAlerts, getTotalValue, subStocks,
@@ -73,6 +75,13 @@ export default function StockScreen() {
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebouncedValue(search, 250);
   const [tab, setTab] = useState('all');
+
+  // Deep-link from the Alerts screen: ?filter=expired|expiring|low|out.
+  const alertFilter = route?.params?.filter;
+  useEffect(() => {
+    if (alertFilter && ALERT_TO_TAB[alertFilter]) setTab(ALERT_TO_TAB[alertFilter]);
+  }, [alertFilter]);
+
   const [letter, setLetter] = useState('All');
   const [modalOpen, setModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState(null);

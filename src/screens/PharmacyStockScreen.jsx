@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, FlatList, TextInput, StyleSheet, RefreshControl } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useWarehouse } from '../context/WarehouseContext';
@@ -68,7 +68,9 @@ const PharmacyStockRow = memo(function PharmacyStockRow({ item, styles, theme, c
   );
 });
 
-export default function PharmacyStockScreen() {
+const ALERT_TO_TAB = { expired: 'expired', expiring: 'expiring', low: 'low', critical: 'critical', out: 'out' };
+
+export default function PharmacyStockScreen({ route }) {
   const { pharmacyStock, pharmacyLocation, settings, adjustStock, loading, refreshing, refresh, stockTruncated } = useWarehouse();
   const { canWritePharmacy } = useAuth();
   const { theme } = useTheme();
@@ -83,6 +85,12 @@ export default function PharmacyStockScreen() {
   // Hard block against a rapid double-tap firing adjustStock twice for the same
   // batch before the first write's compare-and-set has landed.
   const inFlightRef = useRef(new Set());
+
+  // Deep-link from the Alerts screen: ?filter=expired|expiring|low|critical|out.
+  const alertFilter = route?.params?.filter;
+  useEffect(() => {
+    if (alertFilter && ALERT_TO_TAB[alertFilter]) setTab(ALERT_TO_TAB[alertFilter]);
+  }, [alertFilter]);
 
   const openAdd = useCallback(() => { setEditingItem(null); setModalOpen(true); }, []);
   const openEdit = useCallback((item) => { setEditingItem(item); setModalOpen(true); }, []);
@@ -142,12 +150,26 @@ export default function PharmacyStockScreen() {
   return (
     <Screen edges={[]}>
       <View style={styles.header}>
-        <Text style={styles.title}>Pharmacy Stock</Text>
-        <Text style={styles.subtitle}>
-          {pharmacyLocation
-            ? `${pharmacyStock.length} products · ${pharmacyLocation.name} — the pharmacy's live billing counter`
-            : 'No Pharmacy location configured yet'}
-        </Text>
+        <View style={styles.headerTop}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.title}>Pharmacy Stock</Text>
+            <Text style={styles.subtitle}>
+              {pharmacyLocation
+                ? `${pharmacyStock.length} products · ${pharmacyLocation.name} — the pharmacy's live billing counter`
+                : 'No Pharmacy location configured yet'}
+            </Text>
+          </View>
+          {canWritePharmacy && (
+            <AnimatedPressable
+              style={styles.newEntryBtn}
+              onPress={openAdd}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
+              <Ionicons name="add-circle" size={18} color={theme.onAccent} />
+              <Text style={styles.newEntryBtnText}>New Entry</Text>
+            </AnimatedPressable>
+          )}
+        </View>
         <Text style={styles.thresholdNote}>Low ≤ {PHARMACY_LOW_UNITS} units / ≤ {PHARMACY_LOW_STRIPS} strips · Critical at half that</Text>
         {stockTruncated ? (
           <Text style={styles.truncatedNote}>
@@ -188,19 +210,13 @@ export default function PharmacyStockScreen() {
             text={
               letter !== 'All'
                 ? `No items found starting with "${letter}"`
-                : pharmacyLocation ? 'No pharmacy stock yet. Add items with the + button, or transfer them in from the desktop Warehouse app.' : 'No Pharmacy location configured yet'
+                : pharmacyLocation ? 'No pharmacy stock yet. Add items with the New Entry button, or transfer them in from the desktop Warehouse app.' : 'No Pharmacy location configured yet'
             }
             icon="💊"
           />
         }
         renderItem={renderItem}
       />
-
-      {canWritePharmacy && (
-        <AnimatedPressable style={styles.fab} onPress={openAdd}>
-          <Ionicons name="add" size={28} color={theme.onAccent} />
-        </AnimatedPressable>
-      )}
 
       <AddItemModal visible={modalOpen} item={editingItem} onClose={() => setModalOpen(false)} target="pharmacy" />
     </Screen>
@@ -209,8 +225,16 @@ export default function PharmacyStockScreen() {
 
 const makeStyles = (t) => StyleSheet.create({
   header: { padding: 16, paddingBottom: 8 },
+  headerTop: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
   title: { color: t.text, fontSize: 26, fontWeight: '800', letterSpacing: -0.4 },
   subtitle: { color: t.muted, fontSize: 12, marginBottom: 6 },
+  newEntryBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    height: 40, paddingHorizontal: 14, borderRadius: 12,
+    backgroundColor: t.accent,
+    shadowColor: t.accent, shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 3,
+  },
+  newEntryBtnText: { color: t.onAccent, fontWeight: '800', fontSize: 13 },
   thresholdNote: { color: t.muted, fontSize: 11, marginBottom: 10, fontStyle: 'italic' },
   truncatedNote: { color: t.warning, fontSize: 11, marginBottom: 10 },
   search: {
@@ -235,9 +259,4 @@ const makeStyles = (t) => StyleSheet.create({
   adjustRow: { flexDirection: 'row', gap: 8 },
   adjustBtn: { width: 32, height: 32, borderRadius: 10, backgroundColor: t.chip, borderWidth: 1, borderColor: t.panelBorder, alignItems: 'center', justifyContent: 'center', marginLeft: 8 },
   adjustBtnText: { color: t.text, fontSize: 18, fontWeight: '700' },
-  fab: {
-    position: 'absolute', right: 20, bottom: 24, width: 56, height: 56, borderRadius: 28,
-    backgroundColor: t.accent, alignItems: 'center', justifyContent: 'center',
-    shadowColor: t.accent, shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.4, shadowRadius: 12, elevation: 6,
-  },
 });
