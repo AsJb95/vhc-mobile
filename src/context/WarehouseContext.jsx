@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Alert } from 'react-native';
 import { supabase } from '../lib/supabaseClient';
-import { findPharmacyLocation } from '../lib/locations';
+import { findPharmacyLocation, isRetiredLocation } from '../lib/locations';
 import { planPharmacyTransferLines } from '../lib/transfers';
 import { useAuth } from './AuthContext';
 
@@ -163,11 +163,13 @@ export function WarehouseProvider({ children }) {
     setLocations(locs || []);
 
     const main = (locs || []).find((l) => l.type === 'warehouse_main');
-    const subs = (locs || []).filter((l) => l.type === 'warehouse_sub');
+    // Retired locations (e.g. the stale duplicate "VHC Pharmacy" warehouse_sub)
+    // are excluded everywhere active — their rows stay in the DB for audit only.
+    const subs = (locs || []).filter((l) => l.type === 'warehouse_sub' && !isRetiredLocation(l));
 
-    // Non-main stock locations we pull batches for: every warehouse_sub plus the
-    // pharmacy_counter location (so Pharmacy Stock is populated). Deduped in case
-    // the pharmacy is ever modelled as a sub-location too.
+    // Non-main stock locations we pull batches for: every active warehouse_sub
+    // plus the pharmacy_counter location (so Pharmacy Stock — and the Sub-Stock
+    // screen's "VHC Pharmacy" entry — read the one live pharmacy inventory).
     const pharmacyLoc = findPharmacyLocation(locs);
     const stockSubLocs = pharmacyLoc && !subs.some((s) => s.id === pharmacyLoc.id)
       ? [...subs, pharmacyLoc]
@@ -1067,7 +1069,9 @@ export function WarehouseProvider({ children }) {
   const settings = useMemo(() => ({
     lowStockThreshold: alertsConfig.lowStockThreshold,
     expiryAlertDays: alertsConfig.expiryAlertDays,
-    subStockLocations: locations.filter((l) => l.type === 'warehouse_sub').map((l) => ({ id: l.id, name: l.name, color: l.color })),
+    subStockLocations: locations
+      .filter((l) => l.type === 'warehouse_sub' && !isRetiredLocation(l))
+      .map((l) => ({ id: l.id, name: l.name, color: l.color })),
   }), [alertsConfig.lowStockThreshold, alertsConfig.expiryAlertDays, locations]);
 
   // ---- Stable public API (L1) ----
