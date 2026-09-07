@@ -1,11 +1,12 @@
-import { useMemo, useState } from 'react';
+import { memo, useCallback, useMemo, useRef, useState } from 'react';
 import { View, Text, FlatList, TextInput, StyleSheet, RefreshControl } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useWarehouse } from '../context/WarehouseContext';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { useThemedStyles } from '../theme/useThemedStyles';
-import { Card, Badge, EmptyState, ScreenLoading, AnimatedPressable, Screen } from '../components/UI';
+import { useDebouncedValue } from '../lib/useDebouncedValue';
+import { Badge, EmptyState, ScreenLoading, AnimatedPressable, Screen } from '../components/UI';
 import { AlphabetFilter } from '../components/Bits';
 import AddItemModal from '../components/AddItemModal';
 import { formatCurrency, expiryStatus } from '../lib/format';
@@ -23,19 +24,82 @@ const TABS = [
   { key: 'expired', label: 'Expired' },
 ];
 
+// One stock card. memo'd so a +/- on a different row, a search keystroke, or a
+// scroll never re-renders it — it only re-renders when its own item / pending /
+// theme actually change. Plain View (no mount animation) so long lists scroll
+// without per-row reanimated work.
+const PharmacyStockRow = memo(function PharmacyStockRow({ item, styles, theme, canWrite, pending, onEdit, onAdjust }) {
+  const exp = expiryStatus(item.expiry);
+  const status = pharmacyStockStatus(item, theme);
+  return (
+    <AnimatedPressable onPress={() => canWrite && onEdit(item)} disabled={!canWrite}>
+      <View style={styles.itemCard}>
+        <View style={styles.itemRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.itemName}>{item.name}</Text>
+            {item.category ? <Text style={styles.itemMeta}>{item.category}</Text> : null}
+            {item.batch ? <Text style={styles.itemMeta}>Batch {item.batch}</Text> : null}
+          </View>
+          <Badge label={status.label} color={status.color} />
+        </View>
+        <View style={styles.itemRow}>
+          <Text style={styles.itemMeta}>Expiry: <Text style={{ color: exp.color }}>{exp.label}</Text></Text>
+          <Text style={styles.itemMeta}>MRP {formatCurrency(item.mrp)} · {item.gst ?? 0}% GST</Text>
+        </View>
+        <View style={styles.itemRow}>
+          <Text style={styles.itemMeta}>{item.stockist || 'No stockist'} {item.hsnCode ? `· HSN ${item.hsnCode}` : ''}</Text>
+          <Text style={styles.itemMeta}>{formatCurrency((item.stock || 0) * (item.netRate || 0))}</Text>
+        </View>
+        <View style={styles.itemRow}>
+          <Text style={styles.stockValue}>{item.stock} units</Text>
+          {canWrite && (
+            <View style={styles.adjustRow}>
+              <AnimatedPressable style={styles.adjustBtn} disabled={pending} onPress={() => onAdjust(item.id, -1)}>
+                <Text style={styles.adjustBtnText}>−</Text>
+              </AnimatedPressable>
+              <AnimatedPressable style={styles.adjustBtn} disabled={pending} onPress={() => onAdjust(item.id, 1)}>
+                <Text style={styles.adjustBtnText}>+</Text>
+              </AnimatedPressable>
+            </View>
+          )}
+        </View>
+      </View>
+    </AnimatedPressable>
+  );
+});
+
 export default function PharmacyStockScreen() {
   const { pharmacyStock, pharmacyLocation, settings, adjustStock, loading, refreshing, refresh, stockTruncated } = useWarehouse();
   const { canWritePharmacy } = useAuth();
   const { theme } = useTheme();
   const styles = useThemedStyles(makeStyles);
   const [search, setSearch] = useState('');
+  const debouncedSearch = useDebouncedValue(search, 250);
   const [tab, setTab] = useState('all');
   const [letter, setLetter] = useState('All');
   const [modalOpen, setModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
+  const [pendingIds, setPendingIds] = useState(() => new Set());
+  // Hard block against a rapid double-tap firing adjustStock twice for the same
+  // batch before the first write's compare-and-set has landed.
+  const inFlightRef = useRef(new Set());
 
-  function openAdd() { setEditingItem(null); setModalOpen(true); }
-  function openEdit(item) { setEditingItem(item); setModalOpen(true); }
+  const openAdd = useCallback(() => { setEditingItem(null); setModalOpen(true); }, []);
+  const openEdit = useCallback((item) => { setEditingItem(item); setModalOpen(true); }, []);
+
+  const onAdjust = useCallback(async (id, delta) => {
+    if (inFlightRef.current.has(id)) return;
+    inFlightRef.current.add(id);
+    setPendingIds((prev) => { const n = new Set(prev); n.add(id); return n; });
+    try {
+      await adjustStock(id, delta);
+    } catch {
+      // adjustStock already surfaced the error
+    } finally {
+      inFlightRef.current.delete(id);
+      setPendingIds((prev) => { const n = new Set(prev); n.delete(id); return n; });
+    }
+  }, [adjustStock]);
 
   const filtered = useMemo(() => {
     const now = new Date();
@@ -54,21 +118,35 @@ export default function PharmacyStockScreen() {
     if (letter !== 'All') {
       list = list.filter((i) => (i.name || '').trim().toUpperCase().startsWith(letter));
     }
-    if (search.trim()) {
-      const s = search.trim().toLowerCase();
+    const s = debouncedSearch.trim().toLowerCase();
+    if (s) {
       list = list.filter((i) => (i.name || '').toLowerCase().includes(s) || (i.batch || '').toLowerCase().includes(s) || (i.stockist || '').toLowerCase().includes(s));
     }
     return list;
-  }, [pharmacyStock, tab, letter, search, settings.expiryAlertDays]);
+  }, [pharmacyStock, tab, letter, debouncedSearch, settings.expiryAlertDays]);
+
+  const renderItem = useCallback(({ item }) => (
+    <PharmacyStockRow
+      item={item}
+      styles={styles}
+      theme={theme}
+      canWrite={canWritePharmacy}
+      pending={pendingIds.has(item.id)}
+      onEdit={openEdit}
+      onAdjust={onAdjust}
+    />
+  ), [styles, theme, canWritePharmacy, pendingIds, openEdit, onAdjust]);
 
   if (loading) return <ScreenLoading />;
 
   return (
-    <Screen>
+    <Screen edges={[]}>
       <View style={styles.header}>
         <Text style={styles.title}>Pharmacy Stock</Text>
         <Text style={styles.subtitle}>
-          {pharmacyLocation ? `${pharmacyStock.length} products at ${pharmacyLocation.name}` : 'No Pharmacy location configured yet'}
+          {pharmacyLocation
+            ? `${pharmacyStock.length} products · ${pharmacyLocation.name} — the pharmacy's live billing counter`
+            : 'No Pharmacy location configured yet'}
         </Text>
         <Text style={styles.thresholdNote}>Low ≤ {PHARMACY_LOW_UNITS} units / ≤ {PHARMACY_LOW_STRIPS} strips · Critical at half that</Text>
         {stockTruncated ? (
@@ -82,6 +160,8 @@ export default function PharmacyStockScreen() {
           placeholderTextColor={theme.muted}
           value={search}
           onChangeText={setSearch}
+          returnKeyType="search"
+          clearButtonMode="while-editing"
         />
         <View style={styles.tabRow}>
           {TABS.map((t) => (
@@ -97,6 +177,11 @@ export default function PharmacyStockScreen() {
         data={filtered}
         keyExtractor={(item, idx) => item.id || String(idx)}
         contentContainerStyle={styles.list}
+        keyboardShouldPersistTaps="handled"
+        removeClippedSubviews
+        initialNumToRender={10}
+        maxToRenderPerBatch={10}
+        windowSize={7}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={theme.accent} />}
         ListEmptyComponent={
           <EmptyState
@@ -108,45 +193,7 @@ export default function PharmacyStockScreen() {
             icon="💊"
           />
         }
-        renderItem={({ item, index }) => {
-          const exp = expiryStatus(item.expiry);
-          const status = pharmacyStockStatus(item, theme);
-          return (
-            <AnimatedPressable onPress={() => canWritePharmacy && openEdit(item)} disabled={!canWritePharmacy}>
-              <Card index={index} style={styles.itemCard}>
-                <View style={styles.itemRow}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.itemName}>{item.name}</Text>
-                    {item.category ? <Text style={styles.itemMeta}>{item.category}</Text> : null}
-                    {item.batch ? <Text style={styles.itemMeta}>Batch {item.batch}</Text> : null}
-                  </View>
-                  <Badge label={status.label} color={status.color} />
-                </View>
-                <View style={styles.itemRow}>
-                  <Text style={styles.itemMeta}>Expiry: <Text style={{ color: exp.color }}>{exp.label}</Text></Text>
-                  <Text style={styles.itemMeta}>MRP {formatCurrency(item.mrp)} · {item.gst ?? 0}% GST</Text>
-                </View>
-                <View style={styles.itemRow}>
-                  <Text style={styles.itemMeta}>{item.stockist || 'No stockist'} {item.hsnCode ? `· HSN ${item.hsnCode}` : ''}</Text>
-                  <Text style={styles.itemMeta}>{formatCurrency((item.stock || 0) * (item.netRate || 0))}</Text>
-                </View>
-                <View style={styles.itemRow}>
-                  <Text style={styles.stockValue}>{item.stock} units</Text>
-                  {canWritePharmacy && (
-                    <View style={styles.adjustRow}>
-                      <AnimatedPressable style={styles.adjustBtn} onPress={() => adjustStock(item.id, -1)}>
-                        <Text style={styles.adjustBtnText}>−</Text>
-                      </AnimatedPressable>
-                      <AnimatedPressable style={styles.adjustBtn} onPress={() => adjustStock(item.id, 1)}>
-                        <Text style={styles.adjustBtnText}>+</Text>
-                      </AnimatedPressable>
-                    </View>
-                  )}
-                </View>
-              </Card>
-            </AnimatedPressable>
-          );
-        }}
+        renderItem={renderItem}
       />
 
       {canWritePharmacy && (
@@ -176,7 +223,11 @@ const makeStyles = (t) => StyleSheet.create({
   tabText: { color: t.muted, fontSize: 12 },
   tabTextActive: { color: t.onAccent, fontWeight: '600' },
   list: { padding: 16, paddingTop: 8, paddingBottom: 32 },
-  itemCard: { marginBottom: 10 },
+  // Same look as the shared <Card> — just without the per-row mount animation.
+  itemCard: {
+    marginBottom: 10, backgroundColor: t.card, borderRadius: 20, borderWidth: 1, borderColor: t.panelBorder,
+    padding: 16, shadowColor: t.shadow, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.16, shadowRadius: 12, elevation: 2,
+  },
   itemRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
   itemName: { color: t.text, fontWeight: '600', fontSize: 15 },
   itemMeta: { color: t.muted, fontSize: 12 },

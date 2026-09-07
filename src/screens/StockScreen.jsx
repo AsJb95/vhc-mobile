@@ -1,10 +1,11 @@
-import { useMemo, useState } from 'react';
+import { memo, useCallback, useMemo, useRef, useState } from 'react';
 import { View, Text, FlatList, TextInput, StyleSheet, RefreshControl } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useWarehouse } from '../context/WarehouseContext';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { useThemedStyles } from '../theme/useThemedStyles';
+import { useDebouncedValue } from '../lib/useDebouncedValue';
 import { Card, Badge, EmptyState, ScreenLoading, StatCard, AnimatedPressable, Screen } from '../components/UI';
 import { SectionTitle, AlphabetFilter } from '../components/Bits';
 import AddItemModal from '../components/AddItemModal';
@@ -19,6 +20,48 @@ const TABS = [
   { key: 'expired', label: 'Expired' },
 ];
 
+// memo'd so a +/-, a search keystroke, or a scroll only re-renders the row that
+// actually changed. Plain View (no per-row mount animation) keeps long lists
+// scrolling smoothly.
+const StockRow = memo(function StockRow({ item, styles, theme, lowThreshold, canWrite, pending, onEdit, onMove, onAdjust }) {
+  const exp = expiryStatus(item.expiry);
+  const status = stockStatus(item.stock, lowThreshold);
+  return (
+    <AnimatedPressable onPress={() => canWrite && onEdit(item)} disabled={!canWrite}>
+      <View style={styles.itemCard}>
+        <View style={styles.itemRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.itemName}>{item.name}</Text>
+            {item.batch ? <Text style={styles.itemMeta}>Batch {item.batch}</Text> : null}
+          </View>
+          <Badge label={status.label} color={status.color} />
+        </View>
+        <View style={styles.itemRow}>
+          <Text style={styles.itemMeta}>Expiry: <Text style={{ color: exp.color }}>{exp.label}</Text></Text>
+          <Text style={styles.itemMeta}>{formatCurrency((item.stock || 0) * (item.netRate || 0))}</Text>
+        </View>
+        <View style={styles.itemRow}>
+          <Text style={styles.stockValue}>{item.stock} units</Text>
+          {canWrite && (
+            <View style={styles.adjustRow}>
+              <AnimatedPressable style={styles.moveBtn} onPress={() => onMove(item)}>
+                <Ionicons name="swap-horizontal" size={15} color={theme.accent} />
+                <Text style={styles.moveBtnText}>Move</Text>
+              </AnimatedPressable>
+              <AnimatedPressable style={styles.adjustBtn} disabled={pending} onPress={() => onAdjust(item.id, -1)}>
+                <Text style={styles.adjustBtnText}>−</Text>
+              </AnimatedPressable>
+              <AnimatedPressable style={styles.adjustBtn} disabled={pending} onPress={() => onAdjust(item.id, 1)}>
+                <Text style={styles.adjustBtnText}>+</Text>
+              </AnimatedPressable>
+            </View>
+          )}
+        </View>
+      </View>
+    </AnimatedPressable>
+  );
+});
+
 export default function StockScreen() {
   const {
     mainStock, settings, adjustStock, loading, refreshing, refresh, stockTruncated,
@@ -28,21 +71,32 @@ export default function StockScreen() {
   const { theme } = useTheme();
   const styles = useThemedStyles(makeStyles);
   const [search, setSearch] = useState('');
+  const debouncedSearch = useDebouncedValue(search, 250);
   const [tab, setTab] = useState('all');
   const [letter, setLetter] = useState('All');
   const [modalOpen, setModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
   const [movingItem, setMovingItem] = useState(null);
+  const [pendingIds, setPendingIds] = useState(() => new Set());
+  const inFlightRef = useRef(new Set());
 
-  // Guards against a double-tap opening the form twice / firing two adds —
-  // openAdd is idempotent (setModalOpen(true) again is a no-op) but this also
-  // stops a second tap while the modal is still animating in.
-  function openAdd() {
-    if (modalOpen) return;
-    setEditingItem(null);
-    setModalOpen(true);
-  }
-  function openEdit(item) { setEditingItem(item); setModalOpen(true); }
+  const openAdd = useCallback(() => { setEditingItem(null); setModalOpen(true); }, []);
+  const openEdit = useCallback((item) => { setEditingItem(item); setModalOpen(true); }, []);
+  const openMove = useCallback((item) => setMovingItem(item), []);
+
+  const onAdjust = useCallback(async (id, delta) => {
+    if (inFlightRef.current.has(id)) return; // block rapid double-tap re-fire
+    inFlightRef.current.add(id);
+    setPendingIds((prev) => { const n = new Set(prev); n.add(id); return n; });
+    try {
+      await adjustStock(id, delta);
+    } catch {
+      // adjustStock already surfaced the error
+    } finally {
+      inFlightRef.current.delete(id);
+      setPendingIds((prev) => { const n = new Set(prev); n.delete(id); return n; });
+    }
+  }, [adjustStock]);
 
   // Headline numbers for the dashboard. getAlerts() is the same bucketing the
   // Alerts screen uses, so the counts always agree.
@@ -78,19 +132,16 @@ export default function StockScreen() {
     if (letter !== 'All') {
       list = list.filter((i) => (i.name || '').trim().toUpperCase().startsWith(letter));
     }
-    if (search.trim()) {
-      const s = search.trim().toLowerCase();
+    const s = debouncedSearch.trim().toLowerCase();
+    if (s) {
       list = list.filter((i) => (i.name || '').toLowerCase().includes(s) || (i.batch || '').toLowerCase().includes(s) || (i.stockist || '').toLowerCase().includes(s));
     }
     return list;
-  }, [mainStock, tab, letter, search, settings.lowStockThreshold, settings.expiryAlertDays]);
+  }, [mainStock, tab, letter, debouncedSearch, settings.lowStockThreshold, settings.expiryAlertDays]);
 
-  if (loading) return <ScreenLoading />;
+  const focusTab = useCallback((key) => { setTab(key); setSearch(''); }, []);
 
-  // Interactive dashboard — tapping an alert tile filters the list below to that
-  // category (and clears any active search so the result is never hidden).
-  const focusTab = (key) => { setTab(key); setSearch(''); };
-  const dashboard = (
+  const dashboard = useMemo(() => (
     <View style={styles.dashboard}>
       <View style={styles.statGrid}>
         <StatCard index={0} label="Total Products" value={summary.totalProducts} color={theme.accent} />
@@ -114,7 +165,23 @@ export default function StockScreen() {
         )}
       </Card>
     </View>
-  );
+  ), [styles, theme, summary, tab, focusTab]);
+
+  const renderItem = useCallback(({ item }) => (
+    <StockRow
+      item={item}
+      styles={styles}
+      theme={theme}
+      lowThreshold={settings.lowStockThreshold}
+      canWrite={canWriteWarehouse}
+      pending={pendingIds.has(item.id)}
+      onEdit={openEdit}
+      onMove={openMove}
+      onAdjust={onAdjust}
+    />
+  ), [styles, theme, settings.lowStockThreshold, canWriteWarehouse, pendingIds, openEdit, openMove, onAdjust]);
+
+  if (loading) return <ScreenLoading />;
 
   return (
     <Screen>
@@ -146,6 +213,8 @@ export default function StockScreen() {
           placeholderTextColor={theme.muted}
           value={search}
           onChangeText={setSearch}
+          returnKeyType="search"
+          clearButtonMode="while-editing"
         />
         <View style={styles.tabRow}>
           {TABS.map((t) => (
@@ -162,6 +231,11 @@ export default function StockScreen() {
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.list}
         ListHeaderComponent={dashboard}
+        keyboardShouldPersistTaps="handled"
+        removeClippedSubviews
+        initialNumToRender={10}
+        maxToRenderPerBatch={10}
+        windowSize={7}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={theme.accent} />}
         ListEmptyComponent={
           <EmptyState
@@ -169,44 +243,7 @@ export default function StockScreen() {
             icon="📦"
           />
         }
-        renderItem={({ item, index }) => {
-          const exp = expiryStatus(item.expiry);
-          const status = stockStatus(item.stock, settings.lowStockThreshold);
-          return (
-            <AnimatedPressable onPress={() => canWriteWarehouse && openEdit(item)} disabled={!canWriteWarehouse}>
-              <Card index={index} style={styles.itemCard}>
-                <View style={styles.itemRow}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.itemName}>{item.name}</Text>
-                    {item.batch ? <Text style={styles.itemMeta}>Batch {item.batch}</Text> : null}
-                  </View>
-                  <Badge label={status.label} color={status.color} />
-                </View>
-                <View style={styles.itemRow}>
-                  <Text style={styles.itemMeta}>Expiry: <Text style={{ color: exp.color }}>{exp.label}</Text></Text>
-                  <Text style={styles.itemMeta}>{formatCurrency((item.stock || 0) * (item.netRate || 0))}</Text>
-                </View>
-                <View style={styles.itemRow}>
-                  <Text style={styles.stockValue}>{item.stock} units</Text>
-                  {canWriteWarehouse && (
-                    <View style={styles.adjustRow}>
-                      <AnimatedPressable style={styles.moveBtn} onPress={() => setMovingItem(item)}>
-                        <Ionicons name="swap-horizontal" size={15} color={theme.accent} />
-                        <Text style={styles.moveBtnText}>Move</Text>
-                      </AnimatedPressable>
-                      <AnimatedPressable style={styles.adjustBtn} onPress={() => adjustStock(item.id, -1)}>
-                        <Text style={styles.adjustBtnText}>−</Text>
-                      </AnimatedPressable>
-                      <AnimatedPressable style={styles.adjustBtn} onPress={() => adjustStock(item.id, 1)}>
-                        <Text style={styles.adjustBtnText}>+</Text>
-                      </AnimatedPressable>
-                    </View>
-                  )}
-                </View>
-              </Card>
-            </AnimatedPressable>
-          );
-        }}
+        renderItem={renderItem}
       />
 
       <AddItemModal visible={modalOpen} item={editingItem} onClose={() => setModalOpen(false)} />
@@ -261,7 +298,11 @@ const makeStyles = (t) => StyleSheet.create({
   clearBtn: { marginTop: 12, alignSelf: 'flex-start' },
   clearBtnText: { color: t.accent, fontSize: 12, fontWeight: '700' },
   hint: { color: t.muted, fontSize: 11, marginTop: 12, fontStyle: 'italic' },
-  itemCard: { marginBottom: 10 },
+  // Same look as the shared <Card> — without the per-row mount animation.
+  itemCard: {
+    marginBottom: 10, backgroundColor: t.card, borderRadius: 20, borderWidth: 1, borderColor: t.panelBorder,
+    padding: 16, shadowColor: t.shadow, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.16, shadowRadius: 12, elevation: 2,
+  },
   itemRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
   itemName: { color: t.text, fontWeight: '600', fontSize: 15 },
   itemMeta: { color: t.muted, fontSize: 12 },

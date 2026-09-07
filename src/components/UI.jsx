@@ -6,10 +6,14 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../context/ThemeContext';
 import { useThemedStyles } from '../theme/useThemedStyles';
 
-export function Screen({ children, style }) {
+// `edges` defaults to ['top'] (status-bar clearance for screens that hide the
+// native stack header). Screens rendered UNDER a native stack header must pass
+// edges={[]} — the header already clears the status bar, so applying the top
+// inset again leaves a status-bar-height gap above the content.
+export function Screen({ children, style, edges = ['top'] }) {
   const styles = useThemedStyles(makeStyles);
   return (
-    <SafeAreaView edges={['top']} style={[styles.screen, style]}>
+    <SafeAreaView edges={edges} style={[styles.screen, style]}>
       {children}
     </SafeAreaView>
   );

@@ -11,35 +11,49 @@ import { formatCurrency, formatDate, expiryStatus, stockStatus } from '../lib/fo
 // (locations.type = 'warehouse_sub'). No location create/rename/delete here —
 // that stays in the desktop Warehouse Management app.
 export default function SubStockScreen() {
-  const { settings, subStocks, getSubStockValue, loading, refreshing, refresh, loadError } = useWarehouse();
+  const { settings, subStocks, loading, refreshing, refresh, loadError } = useWarehouse();
   const { theme } = useTheme();
   const styles = useThemedStyles(makeStyles);
   const [openId, setOpenId] = useState(null);
 
-  const locs = useMemo(() => (settings.subStockLocations || []).map((l) => {
-    const items = subStocks[l.id] || [];
-    const now = new Date();
-    const horizon = new Date(now.getTime() + (settings.expiryAlertDays || 90) * 86400000);
-    return {
-      ...l,
-      items,
-      qty: items.reduce((s, i) => s + (i.stock || 0), 0),
-      value: getSubStockValue(l.id),
-      low: items.filter((i) => (i.stock || 0) > 0 && (i.stock || 0) < settings.lowStockThreshold).length,
-      out: items.filter((i) => (i.stock || 0) === 0).length,
-      expiring: items.filter((i) => i.expiry && new Date(i.expiry) <= horizon && new Date(i.expiry) >= now).length,
-    };
-  }), [settings.subStockLocations, subStocks, getSubStockValue, settings.expiryAlertDays, settings.lowStockThreshold]);
+  // One pass per location instead of five array walks — computes qty, value, and
+  // the low/out/expiring counts together. Recomputes only when the underlying
+  // sub-stock data or the thresholds change.
+  const locs = useMemo(() => {
+    const now = Date.now();
+    const horizonMs = now + (settings.expiryAlertDays || 90) * 86400000;
+    const lowT = settings.lowStockThreshold;
+    return (settings.subStockLocations || []).map((l) => {
+      const items = subStocks[l.id] || [];
+      let qty = 0, value = 0, low = 0, out = 0, expiring = 0;
+      for (const i of items) {
+        const s = i.stock || 0;
+        qty += s;
+        value += s * (i.netRate || 0);
+        if (s === 0) out += 1;
+        else if (s < lowT) low += 1;
+        if (i.expiry) {
+          const e = new Date(i.expiry).getTime();
+          if (e >= now && e <= horizonMs) expiring += 1;
+        }
+      }
+      return { ...l, items, qty, value, low, out, expiring };
+    });
+  }, [settings.subStockLocations, subStocks, settings.expiryAlertDays, settings.lowStockThreshold]);
 
   if (loading) return <ScreenLoading />;
 
   return (
-    <Screen>
+    <Screen edges={[]}>
       <ScrollView
         contentContainerStyle={styles.content}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={theme.accent} />}
       >
-        <Text style={styles.subtitle}>{locs.length} sub-stock location(s)</Text>
+        <Text style={styles.subtitle}>{locs.length} warehouse sub-stock location(s)</Text>
+        <Text style={styles.note}>
+          These are warehouse sub-stock pools. The pharmacy&apos;s live billing stock is separate —
+          see Pharmacy → Pharmacy Stock.
+        </Text>
         {loadError ? <Text style={styles.err}>Showing cached data — {loadError}</Text> : null}
 
         {locs.length === 0 ? (
@@ -104,7 +118,8 @@ export default function SubStockScreen() {
 
 const makeStyles = (t) => StyleSheet.create({
   content: { padding: 16, paddingBottom: 40 },
-  subtitle: { color: t.muted, fontSize: 12, marginBottom: 10 },
+  subtitle: { color: t.muted, fontSize: 12, marginBottom: 4 },
+  note: { color: t.muted, fontSize: 11, fontStyle: 'italic', marginBottom: 12, lineHeight: 15 },
   err: { color: t.warning, fontSize: 12, marginBottom: 10 },
   card: { marginBottom: 12 },
   rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
