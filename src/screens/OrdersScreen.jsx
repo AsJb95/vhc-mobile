@@ -52,22 +52,22 @@ export default function OrdersScreen() {
   function confirmApproveTransfer(t) {
     const lines = t.items.map((i) => `• ${i.name} ×${i.qty}${i.batch ? ` (batch ${i.batch})` : ''}`).join('\n');
     Alert.alert(
-      'Approve transfer?',
-      `${t.transferNumber}\n\n${lines}\n\nThe above is ADDED to Pharmacy Inventory now. Main Stock was already reduced when the transfer was created. This cannot be undone.`,
+      'Accept this request?',
+      `${t.transferNumber}\n\n${lines}\n\nThis deducts the above from Main Stock and adds it to Pharmacy Inventory. It cannot be undone.`,
       [
         { text: 'Not yet', style: 'cancel' },
-        { text: 'Approve', onPress: () => { approvePharmacyTransfer(t.id); setViewOrder(null); } },
+        { text: 'Accept', onPress: () => { approvePharmacyTransfer(t.id); setViewOrder(null); } },
       ],
     );
   }
 
   function confirmCancelTransfer(t) {
     Alert.alert(
-      'Cancel transfer?',
-      `${t.transferNumber} will be marked Cancelled. The reserved quantity is returned to Main Stock. Pharmacy Inventory is not changed. The record stays in Transfer History.`,
+      'Reject this request?',
+      `${t.transferNumber} will be marked Rejected. No stock changes. The record stays in Transfer History.`,
       [
         { text: 'Keep pending', style: 'cancel' },
-        { text: 'Cancel transfer', style: 'destructive', onPress: () => { cancelPharmacyTransfer(t.id); setViewOrder(null); } },
+        { text: 'Reject', style: 'destructive', onPress: () => { cancelPharmacyTransfer(t.id); setViewOrder(null); } },
       ],
     );
   }
@@ -203,10 +203,10 @@ export default function OrdersScreen() {
                 {viewOrder.mode === 'transfer' && viewOrder.status === 'Pending' && canWriteWarehouse && (
                   <View style={styles.actionRow}>
                     <AnimatedPressable style={styles.receiveBtn} onPress={() => confirmApproveTransfer(viewOrder)}>
-                      <Text style={styles.actionBtnText}>Approve — update Pharmacy</Text>
+                      <Text style={styles.actionBtnText}>Accept — update Pharmacy</Text>
                     </AnimatedPressable>
                     <AnimatedPressable style={styles.cancelBtn} onPress={() => confirmCancelTransfer(viewOrder)}>
-                      <Text style={styles.actionBtnText}>Cancel Transfer</Text>
+                      <Text style={styles.actionBtnText}>Reject</Text>
                     </AnimatedPressable>
                   </View>
                 )}

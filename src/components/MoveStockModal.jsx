@@ -11,10 +11,10 @@ import { formatDate } from '../lib/format';
 // Quick "Move Stock" for ONE Main Stock batch row.
 //   * Destination = a warehouse sub-stock location  -> immediate transfer
 //     (existing createTransferOrder: same records, compare-and-set writes).
-//   * Destination = the Pharmacy (pharmacy_counter)  -> reserves the units out
-//     of Main Stock now and creates a PENDING transfer_orders row. Pharmacy
-//     Inventory is untouched until it is approved in Orders -> Transfers.
-// No new inventory path or table is introduced either way.
+//   * Destination = the Pharmacy (pharmacy_counter)  -> creates a PENDING
+//     request and changes NO stock. The Pharmacy then Accepts (deduct Main,
+//     add Pharmacy) or Rejects (no change) in Pharmacy -> Pending Stock
+//     Requests. No new inventory path or table is introduced either way.
 export default function MoveStockModal({ visible, item, onClose }) {
   const { settings, pharmacyLocation, createTransferOrder, createPharmacyTransferRequest } = useWarehouse();
   const styles = useThemedStyles(makeStyles);
@@ -76,12 +76,11 @@ export default function MoveStockModal({ visible, item, onClose }) {
         });
         if (res && res.ok) {
           Alert.alert(
-            'Pending transfer created',
+            'Request sent to Pharmacy',
             `${res.transferNumber}\n\n` +
-              `${qNum} unit(s) of "${item.name}" are reserved for ${pharmacyLocation?.name || 'the Pharmacy'}.\n` +
-              `Main Stock: ${available} → ${available - qNum} unit(s).\n\n` +
-              'Pharmacy Inventory is NOT changed yet — approve it in Orders → Transfers after the stock physically arrives. ' +
-              'Cancelling the transfer returns the units to Main Stock.',
+              `${qNum} unit(s) of "${item.name}" requested for ${pharmacyLocation?.name || 'the Pharmacy'}.\n\n` +
+              'No stock has changed. The Pharmacy accepts it in Pharmacy → Pending Stock Requests — only then ' +
+              `is Main Stock reduced and Pharmacy Inventory increased. Rejecting it changes nothing.`,
           );
           onClose();
         }
@@ -134,9 +133,9 @@ export default function MoveStockModal({ visible, item, onClose }) {
           </AnimatedPressable>
           {toPharmacy ? (
             <Text style={styles.pendingHint}>
-              Moving to the Pharmacy reserves the units out of Main Stock now and creates a{' '}
-              <Text style={styles.pendingHintStrong}>pending transfer</Text>. Pharmacy Inventory is only updated after you
-              approve it in Orders → Transfers.
+              This creates a <Text style={styles.pendingHintStrong}>pending request</Text> and changes no stock. The
+              Pharmacy must Accept it (in Pharmacy → Pending Stock Requests) before Main Stock is reduced and Pharmacy
+              Inventory is increased.
             </Text>
           ) : null}
 

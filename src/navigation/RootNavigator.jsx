@@ -11,6 +11,7 @@ import PharmacyDashboardScreen from '../screens/PharmacyDashboardScreen';
 import SalesReportsScreen from '../screens/SalesReportsScreen';
 import InventoryIntelligenceScreen from '../screens/InventoryIntelligenceScreen';
 import PharmacyStockScreen from '../screens/PharmacyStockScreen';
+import PendingTransfersScreen from '../screens/PendingTransfersScreen';
 import PatientLookupScreen from '../screens/PatientLookupScreen';
 import CreditScreen from '../screens/CreditScreen';
 import StockScreen from '../screens/StockScreen';
@@ -58,6 +59,7 @@ function PharmacyStack() {
       <Stack.Screen name="Sales & Reports" component={SalesReportsScreen} />
       <Stack.Screen name="Inventory Intelligence" component={InventoryIntelligenceScreen} />
       <Stack.Screen name="Pharmacy Stock" component={PharmacyStockScreen} />
+      <Stack.Screen name="Pending Stock Requests" component={PendingTransfersScreen} />
       {canSeePatients && <Stack.Screen name="Patient Lookup" component={PatientLookupScreen} />}
       {canSeePatients && <Stack.Screen name="Credit / Outstanding" component={CreditScreen} />}
     </Stack.Navigator>
@@ -91,8 +93,9 @@ function MoreStack() {
 export default function RootNavigator() {
   const insets = useSafeAreaInsets();
   const { theme, isDark } = useTheme();
-  // Warehouse-side nudge: count of Warehouse→Pharmacy transfers still awaiting
-  // approval. Shown on the Warehouse tab (approve/cancel live in Orders → Transfers).
+  // Nudge: Warehouse→Pharmacy stock requests awaiting the Pharmacy's decision.
+  // Shown on the Pharmacy tab — Accept/Reject live in Pharmacy → Pending Stock
+  // Requests (Orders → Transfers keeps the same actions for warehouse staff).
   const { pendingPharmacyTransfers } = useWarehouse();
   const pendingCount = pendingPharmacyTransfers?.length || 0;
 
@@ -137,15 +140,15 @@ export default function RootNavigator() {
         })}
       >
         <Tab.Screen name="Home" component={HomeScreen} />
-        <Tab.Screen name="Pharmacy" component={PharmacyStack} />
         <Tab.Screen
-          name="Warehouse"
-          component={WarehouseStack}
+          name="Pharmacy"
+          component={PharmacyStack}
           options={{
             tabBarBadge: pendingCount > 0 ? pendingCount : undefined,
             tabBarBadgeStyle: { backgroundColor: theme.warning, color: theme.onAccent, fontSize: 10 },
           }}
         />
+        <Tab.Screen name="Warehouse" component={WarehouseStack} />
         <Tab.Screen name="Alerts" component={AlertsScreen} />
         <Tab.Screen name="More" component={MoreStack} />
       </Tab.Navigator>

@@ -5,11 +5,13 @@
 // OrdersScreen. `theme` is the plain colour object from ThemeContext.
 export function transferStatusColor(status, theme) {
   if (status === 'Completed') return theme.success;
-  if (status === 'Cancelled') return theme.danger;
+  if (status === 'Rejected' || status === 'Cancelled') return theme.danger;
   return theme.warning; // Pending (or anything unexpected)
 }
 
-export const TRANSFER_STATUS_FILTERS = ['All', 'Pending', 'Completed', 'Cancelled'];
+// 'Cancelled' kept for pre-existing rows from the old model. New requests end as
+// Pending -> Completed (accepted) or Pending -> Rejected.
+export const TRANSFER_STATUS_FILTERS = ['All', 'Pending', 'Completed', 'Rejected', 'Cancelled'];
 
 export function filterTransfersByStatus(transfers, status) {
   if (!status || status === 'All') return transfers;
