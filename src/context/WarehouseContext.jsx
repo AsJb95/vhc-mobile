@@ -2,7 +2,7 @@ import { createContext, useContext, useState, useEffect, useCallback, useRef, us
 import { Alert } from 'react-native';
 import { supabase } from '../lib/supabaseClient';
 import { findPharmacyLocation, isRetiredLocation } from '../lib/locations';
-import { planPharmacyTransferLines } from '../lib/transfers';
+import { planPharmacyTransferLines, planStockReturnLines, isStockReturn } from '../lib/transfers';
 import { useAuth } from './AuthContext';
 
 // Whether transfer_orders.created_by / approved_by / cancelled_by(+_at) exist on
@@ -343,9 +343,13 @@ export function WarehouseProvider({ children }) {
   }, [fetchAll]);
 
   // Live updates: the Warehouse desktop app and Pharmacy POS write to the same
-  // tables. Subscribe to stock + catalog changes and pull a fresh snapshot
-  // (debounced) so screens don't rely on manual pull-to-refresh. Falls back
-  // silently to refresh-only if the realtime channel can't connect.
+  // tables. Subscribe to stock + catalog + transfer-request changes and pull a
+  // fresh snapshot (debounced) so screens don't rely on manual pull-to-refresh.
+  // transfer_orders is what makes a newly-created pending request / return show
+  // up (and an accepted/rejected one disappear) on every device without a pull.
+  // Falls back silently to refresh-only if the realtime channel can't connect,
+  // or if transfer_orders isn't in the realtime publication yet (see
+  // supabase/migrations/20260909000100_transfer_orders_realtime.sql).
   useEffect(() => {
     let debounce = null;
     const scheduleRefresh = () => {
@@ -363,6 +367,7 @@ export function WarehouseProvider({ children }) {
       .channel(`warehouse-stock-${Date.now()}-${Math.random().toString(36).slice(2)}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'stock_batches' }, scheduleRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'items' }, scheduleRefresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'transfer_orders' }, scheduleRefresh)
       .subscribe();
 
     return () => {
@@ -806,16 +811,20 @@ export function WarehouseProvider({ children }) {
     return { ok: true, transferNumber, toLocationId: order.toLocationId };
   }
 
-  // ---- Warehouse -> Pharmacy: manual-approval stock requests ----
-  // WAREHOUSE STOCK != PHARMACY INVENTORY. Moving stock to the pharmacy_counter
-  // records a 'Pending' transfer_orders row and changes NO stock. The Pharmacy
-  // then Accepts (Pending -> Completed: deduct Main, add Pharmacy) or Rejects
-  // (Pending -> Rejected: no stock change). transfer_number is the unique
-  // tracking id; transfer_orders/_items rows are the audit trail and are never
-  // deleted — accept / reject only change status.
+  // ---- Stock transfers between Main Warehouse and the Pharmacy counter ----
+  // WAREHOUSE STOCK != PHARMACY INVENTORY. Both directions ride the same
+  // transfer_orders / transfer_order_items rows and the same Pending ->
+  // Completed / Rejected status vocabulary; only the from/to location ids differ:
+  //   * Warehouse -> Pharmacy transfer:  from = Main,     to = Pharmacy
+  //   * Pharmacy  -> Warehouse return:   from = Pharmacy,  to = Main
+  // Creating a request records a 'Pending' row and changes NO stock. The
+  // RECEIVING side then Accepts (Pending -> Completed: deduct source, add
+  // destination, ledger) or Rejects (Pending -> Rejected: no stock change).
+  // transfer_number is the unique tracking id; rows are the audit trail and are
+  // never deleted — accept / reject only change status.
 
   // Add `qty` to the item's batch at `locationId` (compare-and-set bump, or a
-  // fresh batch row if none exists). Used by Accept to add into Pharmacy.
+  // fresh batch row if none exists). Used by Accept to add into the destination.
   async function addQtyToBatch({ itemId, locationId, batch, qty, expiry, mrp, netRate, gst, stockist }) {
     const { data: row, error: readErr } = await batchEq(
       supabase.from('stock_batches').select('id, qty').eq('item_id', itemId).eq('location_id', locationId),
@@ -836,21 +845,23 @@ export function WarehouseProvider({ children }) {
     return { before: 0, after: qty };
   }
 
-  // Create a Pending request. Changes NO stock. The Main Stock snapshot is only
-  // validated up front (friendly error); the real deduction happens, against a
-  // fresh live check, when the Pharmacy Accepts.
-  async function createPharmacyTransferRequest(order) {
-    const mainId = mainLocationId();
-    const pharmId = pharmacyLocationId();
-    if (!pharmId) throw new Error('No pharmacy_counter location is configured.');
+  // Optimistically reflect a status change locally so an accepted / rejected
+  // request drops out of the pending lists and badges immediately, without
+  // waiting for the (serialised, network-bound) fetchAll() that always follows
+  // to reconcile. The server-side compare-and-set claim has already guaranteed
+  // the new status by the time this runs.
+  function markTransferStatusLocally(transferId, status) {
+    setTransferOrders((prev) => prev.map((t) => (t.id === transferId ? { ...t, status } : t)));
+  }
 
-    const { lines, error: planErr } = planPharmacyTransferLines(mainStock, order.items);
-    if (planErr) throw new Error(planErr);
-
+  // Insert a Pending transfer_orders header + its item rows. Changes NO stock.
+  // Shared by both directions — the caller supplies the resolved lines (from
+  // planTransferLines) and which way round the locations go.
+  async function insertPendingTransfer({ fromLocId, toLocId, lines, notes, transferDate }) {
     let transferNumber = await generateTransferNumber();
     const insertReq = (num) => supabase.from('transfer_orders').insert({
-      transfer_number: num, from_location_id: mainId, to_location_id: pharmId,
-      transfer_date: order.transferDate || null, notes: order.notes || null, status: 'Pending',
+      transfer_number: num, from_location_id: fromLocId, to_location_id: toLocId,
+      transfer_date: transferDate || null, notes: notes || null, status: 'Pending',
       ...(transferAuditColsSupported && user?.id ? { created_by: user.id } : {}),
     }).select().single();
 
@@ -876,31 +887,31 @@ export function WarehouseProvider({ children }) {
     return { ok: true, pending: true, transferNumber };
   }
 
-  // Accept: live-check that Main Stock still has enough for EVERY line, then
-  // claim the row (Pending -> Completed via compare-and-set), then deduct Main
-  // and add Pharmacy, batch-matched. The claim is the single guard against a
-  // double accept or accepting a rejected row. Nothing moves until this runs.
-  async function approvePharmacyTransfer(transferId) {
+  // Accept a Pending transfer/return: live-check that the SOURCE location still
+  // has enough for EVERY line, then claim the row (Pending -> Completed via
+  // compare-and-set), then deduct the source and add the destination,
+  // batch-matched, with a stock_movements ledger row per side. The status claim
+  // is the single guard against a double accept or accepting a rejected row —
+  // safe to open / accept the same request from multiple devices. Nothing moves
+  // until this runs. `sourceLabel` / `destLabel` / `reasonTag` are wording only.
+  async function acceptPendingTransfer(transferId, { sourceLocId, destLocId, sourceLabel, destLabel, reasonTag }) {
     const t = transferOrders.find((x) => x.id === transferId);
     if (!t) throw new Error('Request not found — refresh and try again.');
     if (t.status !== 'Pending') throw new Error(`This request is already "${t.status}".`);
-
-    const mainId = mainLocationId();
-    const pharmId = t.toLocationId || pharmacyLocationId();
-    if (!pharmId) throw new Error('No pharmacy_counter location is configured.');
+    if (!sourceLocId || !destLocId) throw new Error('Transfer locations are not configured.');
 
     const plan = [];
     for (const line of t.items) {
       const qty = Math.max(0, line.qty || 0);
       if (qty === 0) continue;
       const { data: src, error: srcErr } = await batchEq(
-        supabase.from('stock_batches').select('id, qty, gst, stockist').eq('item_id', line.mainStockId).eq('location_id', mainId),
+        supabase.from('stock_batches').select('id, qty, gst, stockist').eq('item_id', line.mainStockId).eq('location_id', sourceLocId),
         line.batch,
       ).maybeSingle();
       if (srcErr) throw srcErr;
       if (!src || (src.qty || 0) < qty) {
         await fetchAll().catch(() => {});
-        throw new Error(`Main Stock for "${line.name}" changed — only ${src?.qty || 0} available (need ${qty}). Accept blocked; refresh and verify.`);
+        throw new Error(`${sourceLabel} for "${line.name}" changed — only ${src?.qty || 0} available (need ${qty}). Accept blocked; refresh and verify.`);
       }
       plan.push({ line, qty, src });
     }
@@ -917,6 +928,7 @@ export function WarehouseProvider({ children }) {
       await fetchAll().catch(() => {});
       throw new Error('This request was already accepted or rejected.');
     }
+    markTransferStatusLocally(transferId, 'Completed');
 
     const problems = [];
     for (const { line, qty, src } of plan) {
@@ -926,21 +938,21 @@ export function WarehouseProvider({ children }) {
           .update({ qty: Math.max(0, (src.qty || 0) - qty) })
           .eq('id', src.id).eq('qty', src.qty).select('id');
         if (srcErr) throw srcErr;
-        if (!srcUpd || srcUpd.length === 0) throw new Error('Main Stock changed during accept');
+        if (!srcUpd || srcUpd.length === 0) throw new Error(`${sourceLabel} changed during accept`);
         logStockMovement({
-          itemId: line.mainStockId, locationId: mainId, batchNo: line.batch, type: 'TRANSFER',
+          itemId: line.mainStockId, locationId: sourceLocId, batchNo: line.batch, type: 'TRANSFER',
           opening: src.qty, closing: Math.max(0, (src.qty || 0) - qty),
-          reason: `Pharmacy transfer ${t.transferNumber} accepted (out of Main Stock)`, createdBy: user?.id,
+          reason: `${reasonTag} ${t.transferNumber} accepted (out of ${sourceLabel})`, createdBy: user?.id,
         });
 
         const { before, after } = await addQtyToBatch({
-          itemId: line.mainStockId, locationId: pharmId, batch: line.batch, qty,
+          itemId: line.mainStockId, locationId: destLocId, batch: line.batch, qty,
           expiry: line.expiry, mrp: line.mrp, netRate: line.netRate, gst: src.gst, stockist: src.stockist,
         });
         logStockMovement({
-          itemId: line.mainStockId, locationId: pharmId, batchNo: line.batch, type: 'TRANSFER',
+          itemId: line.mainStockId, locationId: destLocId, batchNo: line.batch, type: 'TRANSFER',
           opening: before, closing: after,
-          reason: `Pharmacy transfer ${t.transferNumber} accepted (into Pharmacy)`, createdBy: user?.id,
+          reason: `${reasonTag} ${t.transferNumber} accepted (into ${destLabel})`, createdBy: user?.id,
         });
       } catch (e) {
         problems.push(`${line.name}: ${e.message || e}`);
@@ -954,9 +966,10 @@ export function WarehouseProvider({ children }) {
     return { ok: true, transferNumber: t.transferNumber };
   }
 
-  // Reject: claim the row (Pending -> Rejected). No stock is touched — nothing
-  // was reserved. The row is kept as an audit record (never deleted).
-  async function cancelPharmacyTransfer(transferId) {
+  // Reject a Pending transfer/return: claim the row (Pending -> Rejected). No
+  // stock is touched — nothing was reserved. The row is kept as an audit record
+  // (never deleted). Direction-agnostic.
+  async function claimTransferRejected(transferId) {
     const t = transferOrders.find((x) => x.id === transferId);
     if (t && t.status !== 'Pending') throw new Error(`This request is already "${t.status}".`);
 
@@ -972,9 +985,96 @@ export function WarehouseProvider({ children }) {
       await fetchAll().catch(() => {});
       throw new Error('This request can no longer be rejected (it was already accepted or rejected).');
     }
+    markTransferStatusLocally(transferId, 'Rejected');
 
     await fetchAll();
     return { ok: true };
+  }
+
+  // ---- Warehouse -> Pharmacy transfer (behaviour unchanged) ----
+
+  // Create a Pending request. Changes NO stock. The Main Stock snapshot is only
+  // validated up front (friendly error); the real deduction happens, against a
+  // fresh live check, when the Pharmacy Accepts.
+  async function createPharmacyTransferRequest(order) {
+    const mainId = mainLocationId();
+    const pharmId = pharmacyLocationId();
+    if (!pharmId) throw new Error('No pharmacy_counter location is configured.');
+
+    const { lines, error: planErr } = planPharmacyTransferLines(mainStock, order.items);
+    if (planErr) throw new Error(planErr);
+
+    return insertPendingTransfer({
+      fromLocId: mainId, toLocId: pharmId, lines,
+      notes: order.notes, transferDate: order.transferDate,
+    });
+  }
+
+  // Accept: deduct Main Stock, add Pharmacy Inventory, mark Completed.
+  async function approvePharmacyTransfer(transferId) {
+    const mainId = mainLocationId();
+    const pharmId = pharmacyLocationId();
+    if (!pharmId) throw new Error('No pharmacy_counter location is configured.');
+    return acceptPendingTransfer(transferId, {
+      sourceLocId: mainId, destLocId: pharmId,
+      sourceLabel: 'Main Stock', destLabel: 'Pharmacy', reasonTag: 'Pharmacy transfer',
+    });
+  }
+
+  // Reject: mark Rejected, no stock change.
+  async function cancelPharmacyTransfer(transferId) {
+    return claimTransferRejected(transferId);
+  }
+
+  // ---- Pharmacy -> Warehouse stock return (reverse of the above) ----
+  // The pharmacy user picks one of their own counter batches to send back; the
+  // Warehouse Accepts (deduct Pharmacy Stock, add Main Stock) or Rejects.
+  // Creating the request changes no stock. The return reason travels in `notes`.
+
+  async function createStockReturnRequest(order) {
+    const mainId = mainLocationId();
+    const pharmId = pharmacyLocationId();
+    if (!pharmId) throw new Error('No pharmacy_counter location is configured.');
+    if (!mainId) throw new Error('No main warehouse location is configured.');
+
+    // Same live snapshot the `pharmacyStock` selector derives — read straight
+    // from subStocks so this doesn't depend on where that const sits in the file.
+    const currentPharmacyStock = subStocks[pharmId] || [];
+    const { lines, error: planErr } = planStockReturnLines(currentPharmacyStock, order.items);
+    if (planErr) throw new Error(planErr);
+
+    return insertPendingTransfer({
+      fromLocId: pharmId, toLocId: mainId, lines,
+      notes: order.notes, transferDate: order.transferDate,
+    });
+  }
+
+  async function approveStockReturn(transferId) {
+    const mainId = mainLocationId();
+    const pharmId = pharmacyLocationId();
+    if (!mainId) throw new Error('No main warehouse location is configured.');
+    return acceptPendingTransfer(transferId, {
+      sourceLocId: pharmId, destLocId: mainId,
+      sourceLabel: 'Pharmacy Stock', destLabel: 'Main Stock', reasonTag: 'Stock return',
+    });
+  }
+
+  async function rejectStockReturn(transferId) {
+    return claimTransferRejected(transferId);
+  }
+
+  // Direction-aware dispatch for screens that show BOTH kinds in one list
+  // (Orders -> Transfers). A Pending row from the pharmacy to main is a return;
+  // anything else is treated as a Warehouse -> Pharmacy transfer.
+  async function approveTransfer(transferId) {
+    const t = transferOrders.find((x) => x.id === transferId);
+    const ids = { pharmacyLocationId: pharmacyLocationId(), mainLocationId: mainLocationId() };
+    return isStockReturn(t, ids) ? approveStockReturn(transferId) : approvePharmacyTransfer(transferId);
+  }
+
+  async function rejectTransfer(transferId) {
+    // Reject is direction-agnostic (status claim only, no stock).
+    return claimTransferRejected(transferId);
   }
 
   function getAlerts() {
@@ -1010,10 +1110,12 @@ export function WarehouseProvider({ children }) {
     [pharmacyLocation, subStocks],
   );
 
-  // Warehouse -> Pharmacy transfers awaiting manual approval. Derived from the
-  // already-loaded transfer_orders (status 'Pending', destination = pharmacy) —
-  // no extra fetch, and NOT realtime, so nothing lands in Pharmacy Inventory
-  // on its own. Newest first.
+  // Warehouse -> Pharmacy transfers awaiting the Pharmacy's decision. Derived
+  // from the already-loaded transfer_orders (status 'Pending', destination =
+  // pharmacy) — no extra fetch. The list refreshes on realtime transfer_orders
+  // changes so a new request appears (and an accepted/rejected one disappears)
+  // without a manual pull, but nothing lands in Pharmacy Inventory until
+  // someone taps Accept. Newest first.
   const pendingPharmacyTransfers = useMemo(() => {
     const pharmId = pharmacyLocation?.id;
     if (!pharmId) return [];
@@ -1021,6 +1123,17 @@ export function WarehouseProvider({ children }) {
       .filter((t) => t.status === 'Pending' && t.toLocationId === pharmId)
       .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
   }, [transferOrders, pharmacyLocation]);
+
+  // Pharmacy -> Warehouse stock returns awaiting the Warehouse's decision. Same
+  // derivation, opposite direction (from pharmacy, to main). Newest first.
+  const pendingStockReturns = useMemo(() => {
+    const pharmId = pharmacyLocation?.id;
+    const mainId = locations.find((l) => l.type === 'warehouse_main')?.id;
+    if (!pharmId || !mainId) return [];
+    return transferOrders
+      .filter((t) => t.status === 'Pending' && t.fromLocationId === pharmId && t.toLocationId === mainId)
+      .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+  }, [transferOrders, pharmacyLocation, locations]);
 
   function getPharmacyAlerts() {
     const now = new Date();
@@ -1059,6 +1172,8 @@ export function WarehouseProvider({ children }) {
     addPharmacyItem, updatePharmacyItem, deletePharmacyItem,
     createPurchaseOrder, createTransferOrder,
     createPharmacyTransferRequest, approvePharmacyTransfer, cancelPharmacyTransfer,
+    createStockReturnRequest, approveStockReturn, rejectStockReturn,
+    approveTransfer, rejectTransfer,
     getAlerts, getTotalValue, getSubStockValue, getPharmacyAlerts,
   };
 
@@ -1080,6 +1195,11 @@ export function WarehouseProvider({ children }) {
       createPharmacyTransferRequest: guarded('createPharmacyTransferRequest'),
       approvePharmacyTransfer: guarded('approvePharmacyTransfer'),
       cancelPharmacyTransfer: guarded('cancelPharmacyTransfer'),
+      createStockReturnRequest: guarded('createStockReturnRequest'),
+      approveStockReturn: guarded('approveStockReturn'),
+      rejectStockReturn: guarded('rejectStockReturn'),
+      approveTransfer: guarded('approveTransfer'),
+      rejectTransfer: guarded('rejectTransfer'),
       getAlerts: delegate('getAlerts'),
       getTotalValue: delegate('getTotalValue'),
       getSubStockValue: delegate('getSubStockValue'),
@@ -1089,14 +1209,14 @@ export function WarehouseProvider({ children }) {
 
   const value = useMemo(() => ({
     locations, mainStock, subStocks, purchaseOrders, transferOrders, settings,
-    pharmacyLocation, pharmacyStock, pendingPharmacyTransfers,
+    pharmacyLocation, pharmacyStock, pendingPharmacyTransfers, pendingStockReturns,
     loading, refreshing, loadError, stockTruncated, lastLoadedAt,
     poHasMore, toHasMore,
     refresh, loadMorePurchaseOrders, loadMoreTransferOrders,
     ...api,
   }), [
     locations, mainStock, subStocks, purchaseOrders, transferOrders, settings,
-    pharmacyLocation, pharmacyStock, pendingPharmacyTransfers,
+    pharmacyLocation, pharmacyStock, pendingPharmacyTransfers, pendingStockReturns,
     loading, refreshing, loadError, stockTruncated, lastLoadedAt,
     poHasMore, toHasMore,
     refresh, loadMorePurchaseOrders, loadMoreTransferOrders, api,

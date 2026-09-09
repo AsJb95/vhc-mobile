@@ -64,10 +64,10 @@ const StockRow = memo(function StockRow({ item, styles, theme, lowThreshold, can
 
 const ALERT_TO_TAB = { expired: 'expired', expiring: 'expiring', low: 'low', out: 'out' };
 
-export default function StockScreen({ route }) {
+export default function StockScreen({ route, navigation }) {
   const {
     mainStock, settings, adjustStock, loading, refreshing, refresh, stockTruncated,
-    getAlerts, getTotalValue, subStocks,
+    getAlerts, getTotalValue, subStocks, pendingStockReturns,
   } = useWarehouse();
   const { canWriteWarehouse } = useAuth();
   const { theme } = useTheme();
@@ -150,8 +150,22 @@ export default function StockScreen({ route }) {
 
   const focusTab = useCallback((key) => { setTab(key); setSearch(''); }, []);
 
+  const returnCount = pendingStockReturns?.length || 0;
+
   const dashboard = useMemo(() => (
     <View style={styles.dashboard}>
+      {canWriteWarehouse && returnCount > 0 ? (
+        <AnimatedPressable onPress={() => navigation?.navigate?.('Pending Returns')}>
+          <Card style={[styles.alertsCard, styles.returnsCard]}>
+            <View style={styles.returnsRow}>
+              <Text style={styles.returnsTitle}>↩️  Pending Return Requests ({returnCount})</Text>
+              <Text style={styles.returnsLink}>Review ›</Text>
+            </View>
+            <Text style={styles.hint}>Stock the Pharmacy wants to send back. Nothing changes until you Accept.</Text>
+          </Card>
+        </AnimatedPressable>
+      ) : null}
+
       <View style={styles.statGrid}>
         <StatCard index={0} label="Total Products" value={summary.totalProducts} color={theme.accent} />
         <StatCard index={1} label="Main Stock Value" value={formatCurrency(summary.totalValue)} color={theme.success} />
@@ -174,7 +188,7 @@ export default function StockScreen({ route }) {
         )}
       </Card>
     </View>
-  ), [styles, theme, summary, tab, focusTab]);
+  ), [styles, theme, summary, tab, focusTab, canWriteWarehouse, returnCount, navigation]);
 
   const renderItem = useCallback(({ item }) => (
     <StockRow
@@ -297,6 +311,10 @@ const makeStyles = (t) => StyleSheet.create({
   dashboard: { marginBottom: 4 },
   statGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
   alertsCard: { marginBottom: 12 },
+  returnsCard: { borderColor: `${t.warning}88`, backgroundColor: `${t.warning}14` },
+  returnsRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  returnsTitle: { color: t.text, fontSize: 15, fontWeight: '800', flex: 1, marginRight: 8 },
+  returnsLink: { color: t.accent, fontSize: 12, fontWeight: '700' },
   tileGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   tile: {
     flexBasis: '47%', flexGrow: 1, backgroundColor: t.chip, borderRadius: 14,

@@ -1,5 +1,10 @@
-// Pure helpers for the Warehouse -> Pharmacy transfer workflow — no DB client,
-// so they're unit-testable and safe to import anywhere.
+// Pure helpers for the stock-transfer workflow — no DB client, so they're
+// unit-testable and safe to import anywhere. The same transfer_orders /
+// transfer_order_items tables carry both directions:
+//   * Warehouse -> Pharmacy  ("transfer")  from = main,     to = pharmacy
+//   * Pharmacy  -> Warehouse ("return")    from = pharmacy,  to = main
+// A row's direction is read from its from/to location ids — there is no second
+// table and no extra status vocabulary (Pending / Completed / Rejected only).
 
 // Badge colour for a transfer_orders.status, mirroring poStatusColor() in
 // OrdersScreen. `theme` is the plain colour object from ThemeContext.
@@ -18,19 +23,30 @@ export function filterTransfersByStatus(transfers, status) {
   return (transfers || []).filter((t) => t.status === status);
 }
 
-// Resolve the lines of a Warehouse -> Pharmacy request against a Main Stock
-// snapshot. Each input item only needs { mainStockId, qty }. Returns
-// { lines, error } where `lines` carry the source batch id + the qty we last saw
-// (for the caller's compare-and-set decrement), and `error` is a user-facing
-// string when nothing can be transferred.
+// Is this transfer row a Pharmacy -> Warehouse stock return (rather than a
+// Warehouse -> Pharmacy transfer)? Direction is the only thing that tells them
+// apart. `ids` = { pharmacyLocationId, mainLocationId }. Returns false when
+// either id is missing so callers default to the forward interpretation.
+export function isStockReturn(transfer, { pharmacyLocationId, mainLocationId } = {}) {
+  if (!transfer || !pharmacyLocationId || !mainLocationId) return false;
+  return transfer.fromLocationId === pharmacyLocationId && transfer.toLocationId === mainLocationId;
+}
+
+// Resolve the lines of a pending transfer/return against a live stock snapshot
+// of the SOURCE location. Each input item only needs { mainStockId, qty } where
+// `mainStockId` is the id of the source stock_batches row (kept that name for
+// backwards compatibility with the Warehouse -> Pharmacy caller). Returns
+// { lines, error } where `lines` carry the source batch id + the qty we last
+// saw (for the caller's compare-and-set decrement), and `error` is a
+// user-facing string when nothing can be moved.
 //
-// Item / batch / expiry / rate identity is taken from the live Main Stock row,
+// Item / batch / expiry / rate identity is taken from the live source row,
 // never from the caller — the caller only chooses which row and how many. This
-// guarantees the transfer records the real item + batch, not just a name.
-export function planPharmacyTransferLines(mainStock, items) {
+// guarantees the record carries the real item + batch, not just a name.
+export function planTransferLines(sourceStock, items, sourceLabel = 'Main Stock') {
   const lines = [];
   for (const raw of items || []) {
-    const src = (mainStock || []).find((i) => i.id === raw.mainStockId);
+    const src = (sourceStock || []).find((i) => i.id === raw.mainStockId);
     const qty = Math.max(0, Math.floor(Number(raw.qty) || 0));
     if (!src || qty === 0) continue;
     lines.push({
@@ -48,14 +64,25 @@ export function planPharmacyTransferLines(mainStock, items) {
     });
   }
   if (lines.length === 0) {
-    return { lines: [], error: 'Nothing to transfer — the item was not found in Main Stock.' };
+    return { lines: [], error: `Nothing to transfer — the item was not found in ${sourceLabel}.` };
   }
   const short = lines.find((l) => l.sourceQty < l.qty);
   if (short) {
     return {
       lines,
-      error: `"${short.name}" no longer has ${short.qty} in Main Stock (only ${short.sourceQty}). Refresh and try again.`,
+      error: `"${short.name}" no longer has ${short.qty} in ${sourceLabel} (only ${short.sourceQty}). Refresh and try again.`,
     };
   }
   return { lines, error: null };
+}
+
+// Warehouse -> Pharmacy: source snapshot is Main Stock. (Unchanged public name
+// so existing callers / tests keep working.)
+export function planPharmacyTransferLines(mainStock, items) {
+  return planTransferLines(mainStock, items, 'Main Stock');
+}
+
+// Pharmacy -> Warehouse return: source snapshot is the pharmacy counter's stock.
+export function planStockReturnLines(pharmacyStock, items) {
+  return planTransferLines(pharmacyStock, items, 'Pharmacy Stock');
 }

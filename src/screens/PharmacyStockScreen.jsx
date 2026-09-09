@@ -9,6 +9,7 @@ import { useDebouncedValue } from '../lib/useDebouncedValue';
 import { Badge, EmptyState, ScreenLoading, AnimatedPressable, Screen } from '../components/UI';
 import { AlphabetFilter } from '../components/Bits';
 import AddItemModal from '../components/AddItemModal';
+import ReturnStockModal from '../components/ReturnStockModal';
 import { formatCurrency, expiryStatus } from '../lib/format';
 import {
   pharmacyStockStatus, isPharmacyLow, isPharmacyCritical, isPharmacyOutOfStock,
@@ -28,7 +29,7 @@ const TABS = [
 // scroll never re-renders it — it only re-renders when its own item / pending /
 // theme actually change. Plain View (no mount animation) so long lists scroll
 // without per-row reanimated work.
-const PharmacyStockRow = memo(function PharmacyStockRow({ item, styles, theme, canWrite, pending, onEdit, onAdjust }) {
+const PharmacyStockRow = memo(function PharmacyStockRow({ item, styles, theme, canWrite, canReturn, pending, onEdit, onAdjust, onReturn }) {
   const exp = expiryStatus(item.expiry);
   const status = pharmacyStockStatus(item, theme);
   return (
@@ -52,14 +53,24 @@ const PharmacyStockRow = memo(function PharmacyStockRow({ item, styles, theme, c
         </View>
         <View style={styles.itemRow}>
           <Text style={styles.stockValue}>{item.stock} units</Text>
-          {canWrite && (
+          {(canWrite || canReturn) && (
             <View style={styles.adjustRow}>
-              <AnimatedPressable style={styles.adjustBtn} disabled={pending} onPress={() => onAdjust(item.id, -1)}>
-                <Text style={styles.adjustBtnText}>−</Text>
-              </AnimatedPressable>
-              <AnimatedPressable style={styles.adjustBtn} disabled={pending} onPress={() => onAdjust(item.id, 1)}>
-                <Text style={styles.adjustBtnText}>+</Text>
-              </AnimatedPressable>
+              {canReturn && (item.stock || 0) > 0 && (
+                <AnimatedPressable style={styles.returnBtn} onPress={() => onReturn(item)}>
+                  <Ionicons name="arrow-undo" size={14} color={theme.accent} />
+                  <Text style={styles.returnBtnText}>Return</Text>
+                </AnimatedPressable>
+              )}
+              {canWrite && (
+                <>
+                  <AnimatedPressable style={styles.adjustBtn} disabled={pending} onPress={() => onAdjust(item.id, -1)}>
+                    <Text style={styles.adjustBtnText}>−</Text>
+                  </AnimatedPressable>
+                  <AnimatedPressable style={styles.adjustBtn} disabled={pending} onPress={() => onAdjust(item.id, 1)}>
+                    <Text style={styles.adjustBtnText}>+</Text>
+                  </AnimatedPressable>
+                </>
+              )}
             </View>
           )}
         </View>
@@ -72,7 +83,7 @@ const ALERT_TO_TAB = { expired: 'expired', expiring: 'expiring', low: 'low', cri
 
 export default function PharmacyStockScreen({ route }) {
   const { pharmacyStock, pharmacyLocation, settings, adjustStock, loading, refreshing, refresh, stockTruncated } = useWarehouse();
-  const { canWritePharmacy } = useAuth();
+  const { canWritePharmacy, canWriteWarehouse } = useAuth();
   const { theme } = useTheme();
   const styles = useThemedStyles(makeStyles);
   const [search, setSearch] = useState('');
@@ -81,6 +92,7 @@ export default function PharmacyStockScreen({ route }) {
   const [letter, setLetter] = useState('All');
   const [modalOpen, setModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
+  const [returningItem, setReturningItem] = useState(null);
   const [pendingIds, setPendingIds] = useState(() => new Set());
   // Hard block against a rapid double-tap firing adjustStock twice for the same
   // batch before the first write's compare-and-set has landed.
@@ -94,6 +106,7 @@ export default function PharmacyStockScreen({ route }) {
 
   const openAdd = useCallback(() => { setEditingItem(null); setModalOpen(true); }, []);
   const openEdit = useCallback((item) => { setEditingItem(item); setModalOpen(true); }, []);
+  const openReturn = useCallback((item) => setReturningItem(item), []);
 
   const onAdjust = useCallback(async (id, delta) => {
     if (inFlightRef.current.has(id)) return;
@@ -139,11 +152,13 @@ export default function PharmacyStockScreen({ route }) {
       styles={styles}
       theme={theme}
       canWrite={canWritePharmacy}
+      canReturn={canWriteWarehouse}
       pending={pendingIds.has(item.id)}
       onEdit={openEdit}
       onAdjust={onAdjust}
+      onReturn={openReturn}
     />
-  ), [styles, theme, canWritePharmacy, pendingIds, openEdit, onAdjust]);
+  ), [styles, theme, canWritePharmacy, canWriteWarehouse, pendingIds, openEdit, onAdjust, openReturn]);
 
   if (loading) return <ScreenLoading />;
 
@@ -219,6 +234,7 @@ export default function PharmacyStockScreen({ route }) {
       />
 
       <AddItemModal visible={modalOpen} item={editingItem} onClose={() => setModalOpen(false)} target="pharmacy" />
+      <ReturnStockModal visible={!!returningItem} item={returningItem} onClose={() => setReturningItem(null)} />
     </Screen>
   );
 }
@@ -256,7 +272,13 @@ const makeStyles = (t) => StyleSheet.create({
   itemName: { color: t.text, fontWeight: '600', fontSize: 15 },
   itemMeta: { color: t.muted, fontSize: 12 },
   stockValue: { color: t.text, fontWeight: '700' },
-  adjustRow: { flexDirection: 'row', gap: 8 },
+  adjustRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  returnBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 5, height: 32,
+    paddingHorizontal: 11, borderRadius: 10,
+    backgroundColor: `${t.accent}1f`, borderWidth: 1, borderColor: `${t.accent}55`,
+  },
+  returnBtnText: { color: t.accent, fontSize: 12, fontWeight: '700' },
   adjustBtn: { width: 32, height: 32, borderRadius: 10, backgroundColor: t.chip, borderWidth: 1, borderColor: t.panelBorder, alignItems: 'center', justifyContent: 'center', marginLeft: 8 },
   adjustBtnText: { color: t.text, fontSize: 18, fontWeight: '700' },
 });

@@ -21,7 +21,7 @@ function poStatusColor(status, t) {
 export default function OrdersScreen() {
   const {
     purchaseOrders, transferOrders, receivePurchaseOrder, cancelPurchaseOrder,
-    approvePharmacyTransfer, cancelPharmacyTransfer,
+    approveTransfer, rejectTransfer, pharmacyLocation,
     loading, refreshing, refresh,
     poHasMore, toHasMore, loadMorePurchaseOrders, loadMoreTransferOrders,
   } = useWarehouse();
@@ -34,6 +34,11 @@ export default function OrdersScreen() {
   const [createOpen, setCreateOpen] = useState(false);
 
   if (loading) return <ScreenLoading />;
+
+  // A Pending transfer FROM the pharmacy is a Pharmacy -> Warehouse return;
+  // anything else is a Warehouse -> Pharmacy transfer. Accept/Reject dispatch
+  // on this in the context (approveTransfer / rejectTransfer).
+  const isReturn = (t) => !!pharmacyLocation?.id && t.fromLocationId === pharmacyLocation.id;
 
   function confirmReceive(order) {
     Alert.alert('Mark as Received?', `This will add ${order.items.length} item(s) from "${order.poNumber}" into main stock.`, [
@@ -51,23 +56,26 @@ export default function OrdersScreen() {
 
   function confirmApproveTransfer(t) {
     const lines = t.items.map((i) => `• ${i.name} ×${i.qty}${i.batch ? ` (batch ${i.batch})` : ''}`).join('\n');
+    const effect = isReturn(t)
+      ? 'This deducts the above from Pharmacy Stock and adds it back to Main Stock. It cannot be undone.'
+      : 'This deducts the above from Main Stock and adds it to Pharmacy Inventory. It cannot be undone.';
     Alert.alert(
-      'Accept this request?',
-      `${t.transferNumber}\n\n${lines}\n\nThis deducts the above from Main Stock and adds it to Pharmacy Inventory. It cannot be undone.`,
+      isReturn(t) ? 'Accept this return?' : 'Accept this request?',
+      `${t.transferNumber}\n\n${lines}\n\n${effect}`,
       [
         { text: 'Not yet', style: 'cancel' },
-        { text: 'Accept', onPress: () => { approvePharmacyTransfer(t.id); setViewOrder(null); } },
+        { text: 'Accept', onPress: () => { approveTransfer(t.id); setViewOrder(null); } },
       ],
     );
   }
 
   function confirmCancelTransfer(t) {
     Alert.alert(
-      'Reject this request?',
+      isReturn(t) ? 'Reject this return?' : 'Reject this request?',
       `${t.transferNumber} will be marked Rejected. No stock changes. The record stays in Transfer History.`,
       [
         { text: 'Keep pending', style: 'cancel' },
-        { text: 'Reject', style: 'destructive', onPress: () => { cancelPharmacyTransfer(t.id); setViewOrder(null); } },
+        { text: 'Reject', style: 'destructive', onPress: () => { rejectTransfer(t.id); setViewOrder(null); } },
       ],
     );
   }
@@ -123,6 +131,7 @@ export default function OrdersScreen() {
                 ) : (
                   <View style={{ flexDirection: 'row', gap: 6 }}>
                     <Badge label={item.status || 'Completed'} color={transferStatusColor(item.status, theme)} />
+                    {isReturn(item) ? <Badge label="Return" color={theme.purple} /> : null}
                     <Badge label={item.toLocationName} color={theme.accent} />
                   </View>
                 )}
@@ -149,10 +158,13 @@ export default function OrdersScreen() {
               <MotiView from={{ opacity: 0, translateY: 16 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 280 }}>
                 <View style={styles.modalTitleRow}>
                   <Text style={styles.modalTitle}>{viewOrder.mode === 'po' ? viewOrder.poNumber : viewOrder.transferNumber}</Text>
-                  <Badge
-                    label={viewOrder.mode === 'po' ? viewOrder.status : (viewOrder.status || 'Completed')}
-                    color={viewOrder.mode === 'po' ? poStatusColor(viewOrder.status, theme) : transferStatusColor(viewOrder.status, theme)}
-                  />
+                  <View style={{ flexDirection: 'row', gap: 6 }}>
+                    {viewOrder.mode === 'transfer' && isReturn(viewOrder) ? <Badge label="Return" color={theme.purple} /> : null}
+                    <Badge
+                      label={viewOrder.mode === 'po' ? viewOrder.status : (viewOrder.status || 'Completed')}
+                      color={viewOrder.mode === 'po' ? poStatusColor(viewOrder.status, theme) : transferStatusColor(viewOrder.status, theme)}
+                    />
+                  </View>
                 </View>
 
                 {viewOrder.mode === 'po' ? (
@@ -203,7 +215,9 @@ export default function OrdersScreen() {
                 {viewOrder.mode === 'transfer' && viewOrder.status === 'Pending' && canWriteWarehouse && (
                   <View style={styles.actionRow}>
                     <AnimatedPressable style={styles.receiveBtn} onPress={() => confirmApproveTransfer(viewOrder)}>
-                      <Text style={styles.actionBtnText}>Accept — update Pharmacy</Text>
+                      <Text style={styles.actionBtnText}>
+                        {isReturn(viewOrder) ? 'Accept — return to Main Stock' : 'Accept — update Pharmacy'}
+                      </Text>
                     </AnimatedPressable>
                     <AnimatedPressable style={styles.cancelBtn} onPress={() => confirmCancelTransfer(viewOrder)}>
                       <Text style={styles.actionBtnText}>Reject</Text>

@@ -17,6 +17,7 @@ import CreditScreen from '../screens/CreditScreen';
 import StockScreen from '../screens/StockScreen';
 import SubStockScreen from '../screens/SubStockScreen';
 import OrdersScreen from '../screens/OrdersScreen';
+import PendingReturnsScreen from '../screens/PendingReturnsScreen';
 import AlertsScreen from '../screens/AlertsScreen';
 import MoreScreen from '../screens/MoreScreen';
 import SystemHealthScreen from '../screens/SystemHealthScreen';
@@ -73,6 +74,7 @@ function WarehouseStack() {
       <Stack.Screen name="Main Stock" component={StockScreen} options={{ headerShown: false }} />
       <Stack.Screen name="Sub-Stock Locations" component={SubStockScreen} />
       <Stack.Screen name="Orders" component={OrdersScreen} />
+      <Stack.Screen name="Pending Returns" component={PendingReturnsScreen} />
     </Stack.Navigator>
   );
 }
@@ -93,11 +95,14 @@ function MoreStack() {
 export default function RootNavigator() {
   const insets = useSafeAreaInsets();
   const { theme, isDark } = useTheme();
-  // Nudge: Warehouse→Pharmacy stock requests awaiting the Pharmacy's decision.
-  // Shown on the Pharmacy tab — Accept/Reject live in Pharmacy → Pending Stock
-  // Requests (Orders → Transfers keeps the same actions for warehouse staff).
-  const { pendingPharmacyTransfers } = useWarehouse();
+  // Tab-badge nudges for stock requests awaiting a decision:
+  //  • Pharmacy tab — Warehouse→Pharmacy transfers (Accept/Reject in Pharmacy →
+  //    Pending Stock Requests).
+  //  • Warehouse tab — Pharmacy→Warehouse returns (Accept/Reject in Warehouse →
+  //    Pending Returns). Orders → Transfers keeps the same actions for either.
+  const { pendingPharmacyTransfers, pendingStockReturns } = useWarehouse();
   const pendingCount = pendingPharmacyTransfers?.length || 0;
+  const returnCount = pendingStockReturns?.length || 0;
 
   const navTheme = useMemo(() => {
     const base = isDark ? DarkTheme : DefaultTheme;
@@ -148,7 +153,14 @@ export default function RootNavigator() {
             tabBarBadgeStyle: { backgroundColor: theme.warning, color: theme.onAccent, fontSize: 10 },
           }}
         />
-        <Tab.Screen name="Warehouse" component={WarehouseStack} />
+        <Tab.Screen
+          name="Warehouse"
+          component={WarehouseStack}
+          options={{
+            tabBarBadge: returnCount > 0 ? returnCount : undefined,
+            tabBarBadgeStyle: { backgroundColor: theme.warning, color: theme.onAccent, fontSize: 10 },
+          }}
+        />
         <Tab.Screen name="Alerts" component={AlertsScreen} />
         <Tab.Screen name="More" component={MoreStack} />
       </Tab.Navigator>
