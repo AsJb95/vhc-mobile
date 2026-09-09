@@ -5,7 +5,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useThemedStyles } from '../theme/useThemedStyles';
 import { Card, Screen, ScreenLoading, EmptyState, AnimatedPressable, Badge } from '../components/UI';
 import { KeyVal } from '../components/Bits';
-import { formatCurrency, formatDate, expiryStatus, stockStatus } from '../lib/format';
+import { formatCurrency, formatDate, expiryStatus, stockStatus, computeStockValue } from '../lib/format';
 import { classifyPharmacyStock, pharmacyStockStatus } from '../lib/pharmacyStock';
 
 // Read-only view of stock at non-main locations:
@@ -30,7 +30,7 @@ export default function SubStockScreen() {
 
     const sumQtyValue = (items) => {
       let qty = 0, value = 0;
-      for (const i of items) { const s = i.stock || 0; qty += s; value += s * (i.netRate || 0); }
+      for (const i of items) { qty += (i.stock || 0); value += computeStockValue(i.netRate, i.mrp, i.stock); }
       return { qty, value };
     };
 

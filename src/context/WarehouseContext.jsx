@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Alert } from 'react-native';
 import { supabase } from '../lib/supabaseClient';
+import { computeStockValue } from '../lib/format';
 import { findPharmacyLocation, isRetiredLocation } from '../lib/locations';
 import { planPharmacyTransferLines, planStockReturnLines, isStockReturn } from '../lib/transfers';
 import { useAuth } from './AuthContext';
@@ -1092,12 +1093,15 @@ export function WarehouseProvider({ children }) {
     };
   }
 
+  // Stock value uses the shared computeStockValue rule (Net Rate when entered,
+  // else MRP) so these totals agree with the per-row Value on the stock screens
+  // and with the VHC Warehouse desktop app.
   function getTotalValue() {
-    return mainStock.reduce((sum, i) => sum + (i.stock || 0) * (i.netRate || 0), 0);
+    return mainStock.reduce((sum, i) => sum + computeStockValue(i.netRate, i.mrp, i.stock), 0);
   }
 
   function getSubStockValue(locationId) {
-    return (subStocks[locationId] || []).reduce((sum, i) => sum + (i.stock || 0) * (i.netRate || 0), 0);
+    return (subStocks[locationId] || []).reduce((sum, i) => sum + computeStockValue(i.netRate, i.mrp, i.stock), 0);
   }
 
   // The Pharmacy's own stock location (type 'pharmacy_counter'), kept fully

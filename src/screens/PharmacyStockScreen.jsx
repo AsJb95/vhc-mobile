@@ -10,7 +10,7 @@ import { Badge, EmptyState, ScreenLoading, AnimatedPressable, Screen } from '../
 import { AlphabetFilter } from '../components/Bits';
 import AddItemModal from '../components/AddItemModal';
 import ReturnStockModal from '../components/ReturnStockModal';
-import { formatCurrency, expiryStatus } from '../lib/format';
+import { formatCurrency, expiryStatus, computeStockValue } from '../lib/format';
 import {
   pharmacyStockStatus, isPharmacyLow, isPharmacyCritical, isPharmacyOutOfStock,
   PHARMACY_LOW_UNITS, PHARMACY_LOW_STRIPS,
@@ -49,7 +49,7 @@ const PharmacyStockRow = memo(function PharmacyStockRow({ item, styles, theme, c
         </View>
         <View style={styles.itemRow}>
           <Text style={styles.itemMeta}>{item.stockist || 'No stockist'} {item.hsnCode ? `· HSN ${item.hsnCode}` : ''}</Text>
-          <Text style={styles.itemMeta}>{formatCurrency((item.stock || 0) * (item.netRate || 0))}</Text>
+          <Text style={styles.itemMeta}>{formatCurrency(computeStockValue(item.netRate, item.mrp, item.stock))}</Text>
         </View>
         <View style={styles.itemRow}>
           <Text style={styles.stockValue}>{item.stock} units</Text>

@@ -10,7 +10,7 @@ import { Card, Badge, EmptyState, ScreenLoading, StatCard, AnimatedPressable, Sc
 import { SectionTitle, AlphabetFilter } from '../components/Bits';
 import AddItemModal from '../components/AddItemModal';
 import MoveStockModal from '../components/MoveStockModal';
-import { formatCurrency, expiryStatus, stockStatus } from '../lib/format';
+import { formatCurrency, expiryStatus, stockStatus, computeStockValue } from '../lib/format';
 
 const TABS = [
   { key: 'all', label: 'All' },
@@ -38,7 +38,7 @@ const StockRow = memo(function StockRow({ item, styles, theme, lowThreshold, can
         </View>
         <View style={styles.itemRow}>
           <Text style={styles.itemMeta}>Expiry: <Text style={{ color: exp.color }}>{exp.label}</Text></Text>
-          <Text style={styles.itemMeta}>{formatCurrency((item.stock || 0) * (item.netRate || 0))}</Text>
+          <Text style={styles.itemMeta}>{formatCurrency(computeStockValue(item.netRate, item.mrp, item.stock))}</Text>
         </View>
         <View style={styles.itemRow}>
           <Text style={styles.stockValue}>{item.stock} units</Text>

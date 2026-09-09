@@ -69,6 +69,18 @@ export function stockStatus(stock, threshold = 200) {
   return { label: 'In Stock', color: colors.success };
 }
 
+// Stock value for one batch/row. Single source of truth, identical to the VHC
+// Warehouse desktop app's src/lib/format.js: use Net Rate (the purchase/cost
+// rate) when it is actually entered (> 0), otherwise fall back to MRP, so Value
+// is never confusingly ₹0 just because the optional cost price is blank/zero —
+// which is the case for almost every batch imported into this database. If both
+// are missing/zero the value is a real ₹0 (there is genuinely no price on file).
+// value = rate x available quantity.
+export function computeStockValue(netRate, mrp, stock) {
+  const rate = Number(netRate) > 0 ? Number(netRate) : (Number(mrp) || 0);
+  return rate * (Number(stock) || 0);
+}
+
 export const colors = {
   bg: '#0a0f1e',
   panel: '#111a2e',
