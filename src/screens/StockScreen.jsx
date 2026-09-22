@@ -11,6 +11,17 @@ import { SectionTitle, AlphabetFilter } from '../components/Bits';
 import AddItemModal from '../components/AddItemModal';
 import MoveStockModal from '../components/MoveStockModal';
 import { formatCurrency, expiryStatus, stockStatus, computeStockValue } from '../lib/format';
+import { stripsToUnits } from '../lib/units';
+
+// Display-only formatting for the Total Stock (Units/Nos) figure — Indian
+// digit grouping (2,390 / 12,500) plus a small guard against floating-point
+// noise (e.g. 26.499999999999996 from a strips*unitsPerPack multiply). Never
+// used before a value is stored; the underlying stripsToUnits() result and
+// Stock (Strips) itself are never rounded or truncated by this.
+function formatUnitsDisplay(n) {
+  const v = Math.round((Number(n) || 0) * 100) / 100;
+  return v.toLocaleString('en-IN');
+}
 
 const TABS = [
   { key: 'all', label: 'All' },
@@ -41,7 +52,14 @@ const StockRow = memo(function StockRow({ item, styles, theme, lowThreshold, can
           <Text style={styles.itemMeta}>{formatCurrency(computeStockValue(item.netRate, item.mrp, item.stock))}</Text>
         </View>
         <View style={styles.itemRow}>
-          <Text style={styles.stockValue}>{item.stock} units</Text>
+          <View style={styles.stockGroup}>
+            <Text style={styles.stockStripsValue}>
+              {item.stock} <Text style={styles.stockStripsUnit}>strips</Text>
+            </Text>
+            <Text style={styles.stockSubLine}>
+              × {item.unitsPerPack || '—'}/strip = <Text style={styles.stockTotalValue}>{formatUnitsDisplay(stripsToUnits(item.stock, item.unitsPerPack))} units</Text>
+            </Text>
+          </View>
           {canWrite && (
             <View style={styles.adjustRow}>
               <AnimatedPressable style={styles.moveBtn} onPress={() => onMove(item)}>
@@ -333,7 +351,16 @@ const makeStyles = (t) => StyleSheet.create({
   itemRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
   itemName: { color: t.text, fontWeight: '600', fontSize: 15 },
   itemMeta: { color: t.muted, fontSize: 12 },
-  stockValue: { color: t.text, fontWeight: '700' },
+  // Stock (Strips) = primary (large, bold); Units Per Strip = supporting
+  // (folded into the small "× N/strip =" prefix); Total Stock (Units/Nos) =
+  // secondary/important (accent-colored, medium weight). Display only — all
+  // three values come from item.stock / item.unitsPerPack / stripsToUnits()
+  // unchanged.
+  stockGroup: { flexShrink: 1 },
+  stockStripsValue: { color: t.text, fontWeight: '800', fontSize: 17 },
+  stockStripsUnit: { color: t.muted, fontWeight: '600', fontSize: 12 },
+  stockSubLine: { color: t.muted, fontSize: 12, marginTop: 2 },
+  stockTotalValue: { color: t.accent, fontWeight: '700' },
   adjustRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   moveBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 5, height: 34,

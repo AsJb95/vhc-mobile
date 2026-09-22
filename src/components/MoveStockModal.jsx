@@ -7,6 +7,7 @@ import SelectModal from './SelectModal';
 import { useWarehouse } from '../context/WarehouseContext';
 import { useThemedStyles } from '../theme/useThemedStyles';
 import { formatDate } from '../lib/format';
+import { stripsToUnits, resolveTransferQuantity, formatStrips } from '../lib/units';
 
 // Quick "Move Stock" for ONE Main Stock batch row.
 //   * Destination = a warehouse sub-stock location  -> immediate transfer
@@ -29,6 +30,7 @@ export default function MoveStockModal({ visible, item, onClose }) {
 
   const [destId, setDestId] = useState('');
   const [qty, setQty] = useState('');
+  const [transferUnit, setTransferUnit] = useState('strips');
   const [saving, setSaving] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
 
@@ -36,6 +38,7 @@ export default function MoveStockModal({ visible, item, onClose }) {
     if (visible) {
       setDestId(destinations.length === 1 ? destinations[0].id : '');
       setQty('');
+      setTransferUnit('strips');
       setSaving(false);
       setPickerOpen(false);
     }
@@ -47,14 +50,18 @@ export default function MoveStockModal({ visible, item, onClose }) {
   const dest = destinations.find((l) => l.id === destId) || null;
   const toPharmacy = !!dest?.isPharmacy;
   const qNum = parseInt(qty, 10) || 0;
-  const exceeds = qNum > available;
+  // Only Pharmacy transfers can be entered in either unit — Main Stock's own
+  // sub-stock locations are strip-based on both ends, nothing to convert.
+  const resolved = toPharmacy ? resolveTransferQuantity(qNum, transferUnit, item?.unitsPerPack) : { strips: qNum, units: qNum };
+  const stripsNeeded = resolved.strips;
+  const exceeds = stripsNeeded > available;
   const canMove = !!destId && qNum > 0 && !exceeds && !saving;
 
   async function submit() {
     if (!destId) { Alert.alert('Choose a destination', 'Select where the stock should go.'); return; }
     if (qNum <= 0) { Alert.alert('Enter a quantity', 'Quantity to move must be at least 1.'); return; }
-    if (qNum > available) {
-      Alert.alert('Not enough stock', `Only ${available} unit(s) of "${item.name}" are available in Main Stock.`);
+    if (stripsNeeded > available) {
+      Alert.alert('Not enough stock', `Only ${available} strip(s) of "${item.name}" are available in Main Stock (${stripsToUnits(available, item?.unitsPerPack)} units).`);
       return;
     }
     setSaving(true);
@@ -71,14 +78,15 @@ export default function MoveStockModal({ visible, item, onClose }) {
       if (toPharmacy) {
         const res = await createPharmacyTransferRequest({
           transferDate: new Date().toISOString().slice(0, 10),
-          notes: `Move Stock (mobile): ${qNum} × ${item.name}${item.batch ? ` [batch ${item.batch}]` : ''} → ${pharmacyLocation?.name || 'Pharmacy'}`,
+          notes: `Move Stock (mobile): ${qNum} ${transferUnit === 'units' ? 'unit(s)' : 'strip(s)'} × ${item.name}${item.batch ? ` [batch ${item.batch}]` : ''} → ${pharmacyLocation?.name || 'Pharmacy'}`,
           items: [line],
+          transferUnit,
         });
         if (res && res.ok) {
           Alert.alert(
             'Request sent to Pharmacy',
             `${res.transferNumber}\n\n` +
-              `${qNum} unit(s) of "${item.name}" requested for ${pharmacyLocation?.name || 'the Pharmacy'}.\n\n` +
+              `Requested: ${formatStrips(resolved.strips)} strip(s) of Main Stock (${resolved.units} units) of "${item.name}" for ${pharmacyLocation?.name || 'the Pharmacy'}.\n\n` +
               'No stock has changed. The Pharmacy accepts it in Pharmacy → Pending Stock Requests — only then ' +
               `is Main Stock reduced and Pharmacy Inventory increased. Rejecting it changes nothing.`,
           );
@@ -122,7 +130,10 @@ export default function MoveStockModal({ visible, item, onClose }) {
               Batch {item.batch || '—'}
               {item.expiry ? ` · Exp ${formatDate(item.expiry)}` : ''}
             </Text>
-            <Text style={styles.available}>Available in Main Stock: <Text style={styles.availableNum}>{available}</Text> unit(s)</Text>
+            <Text style={styles.available}>
+              Available in Main Stock: <Text style={styles.availableNum}>{available}</Text> strip(s)
+              {' '}({stripsToUnits(available, item?.unitsPerPack)} units)
+            </Text>
           </Card>
 
           <Text style={styles.label}>Destination *</Text>
@@ -132,21 +143,48 @@ export default function MoveStockModal({ visible, item, onClose }) {
             </Text>
           </AnimatedPressable>
           {toPharmacy ? (
-            <Text style={styles.pendingHint}>
-              This creates a <Text style={styles.pendingHintStrong}>pending request</Text> and changes no stock. The
-              Pharmacy must Accept it (in Pharmacy → Pending Stock Requests) before Main Stock is reduced and Pharmacy
-              Inventory is increased.
-            </Text>
+            <>
+              <Text style={styles.pendingHint}>
+                This creates a <Text style={styles.pendingHintStrong}>pending request</Text> and changes no stock. The
+                Pharmacy must Accept it (in Pharmacy → Pending Stock Requests) before Main Stock is reduced and Pharmacy
+                Inventory is increased.
+              </Text>
+              <Text style={styles.label}>Transfer As</Text>
+              <View style={styles.toggleRow}>
+                <AnimatedPressable
+                  style={[styles.toggleBtn, transferUnit === 'strips' && styles.toggleBtnActive]}
+                  onPress={() => setTransferUnit('strips')}
+                >
+                  <Text style={[styles.toggleText, transferUnit === 'strips' && styles.toggleTextActive]}>Strips</Text>
+                </AnimatedPressable>
+                <AnimatedPressable
+                  style={[styles.toggleBtn, transferUnit === 'units' && styles.toggleBtnActive]}
+                  onPress={() => setTransferUnit('units')}
+                >
+                  <Text style={[styles.toggleText, transferUnit === 'units' && styles.toggleTextActive]}>Units (Nos)</Text>
+                </AnimatedPressable>
+              </View>
+            </>
           ) : null}
 
           <FormField
-            label="Quantity to move *"
+            label={`Quantity to move (${toPharmacy ? (transferUnit === 'units' ? 'Units' : 'Strips') : 'Strips'}) *`}
             keyboardType="numeric"
-            placeholder={`1 – ${available}`}
+            placeholder={toPharmacy && transferUnit === 'units' ? `1 – ${stripsToUnits(available, item?.unitsPerPack)}` : `1 – ${available}`}
             value={qty}
             onChangeText={setQty}
           />
-          {exceeds ? <Text style={styles.errorText}>Cannot move more than the {available} available.</Text> : null}
+          {exceeds ? (
+            <Text style={styles.errorText}>
+              Exceeds available stock ({available} strips = {stripsToUnits(available, item?.unitsPerPack)} units).
+            </Text>
+          ) : null}
+          {toPharmacy && qNum > 0 && !exceeds ? (
+            <Text style={styles.previewText}>
+              Warehouse: {available} → {formatStrips(available - resolved.strips)} strips{'\n'}
+              Pharmacy: +{resolved.units} units
+            </Text>
+          ) : null}
         </ScrollView>
 
         <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 12) + 10 }]}>
@@ -191,6 +229,15 @@ const makeStyles = (t) => StyleSheet.create({
   pendingHint: { color: t.muted, fontSize: 12, lineHeight: 17, marginBottom: 14 },
   pendingHintStrong: { color: t.warning, fontWeight: '800' },
   errorText: { color: t.danger, fontSize: 12, marginTop: -4 },
+  toggleRow: { flexDirection: 'row', gap: 8, marginBottom: 14 },
+  toggleBtn: {
+    flex: 1, borderWidth: 1, borderColor: t.panelBorder, borderRadius: 10,
+    paddingVertical: 10, alignItems: 'center', backgroundColor: t.panel,
+  },
+  toggleBtnActive: { backgroundColor: t.accent, borderColor: t.accent },
+  toggleText: { color: t.muted, fontWeight: '700', fontSize: 13 },
+  toggleTextActive: { color: t.onAccent },
+  previewText: { color: t.muted, fontSize: 12, lineHeight: 18, marginTop: 4, marginBottom: 8 },
   footer: {
     flexDirection: 'row', gap: 14,
     paddingHorizontal: 16, paddingTop: 14,

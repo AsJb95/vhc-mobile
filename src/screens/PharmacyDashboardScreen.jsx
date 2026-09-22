@@ -13,7 +13,7 @@ import { classifyPharmacyStock } from '../lib/pharmacyStock';
 export default function PharmacyDashboardScreen({ navigation }) {
   const { pharmacyStock, pharmacyLocation, pendingPharmacyTransfers, settings, loading: whLoading } = useWarehouse();
   const {
-    recentSales, creditOutstanding, asOf, loading: phLoading, refreshing, refresh, loadError, salesTruncated,
+    recentSales, creditOutstanding, creditLedger, asOf, loading: phLoading, refreshing, refresh, loadError, salesTruncated,
   } = usePharmacy();
   const { theme } = useTheme();
   const styles = useThemedStyles(makeStyles);
@@ -92,9 +92,9 @@ export default function PharmacyDashboardScreen({ navigation }) {
         <AnimatedPressable onPress={go('Credit / Outstanding')}>
           <Card index={4} style={styles.card}>
             <SectionTitle right={<Text style={styles.link}>Details ›</Text>}>Outstanding Credit</SectionTitle>
-            <KeyVal label="Total billed as Credit" value={formatCurrency(creditOutstanding.total)} strong color={theme.warning} />
+            <KeyVal label="Pending credit" value={creditLedger ? formatCurrency(creditOutstanding.total) : 'Unavailable'} strong color={theme.warning} />
             <KeyVal label="Credit bills" value={creditOutstanding.count} />
-            <Text style={styles.hint}>All-time Credit-mode bills. The POS does not track repayments.</Text>
+            <Text style={styles.hint}>Credit bills less recorded repayments. Tap to collect a payment.</Text>
           </Card>
         </AnimatedPressable>
 

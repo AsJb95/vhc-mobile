@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { View, Text, FlatList, StyleSheet, RefreshControl, Modal, ScrollView, Alert, ActivityIndicator } from 'react-native';
 import { MotiView } from 'moti';
 import Ionicons from '@expo/vector-icons/Ionicons';
@@ -18,7 +18,7 @@ function poStatusColor(status, t) {
   return t.warning;
 }
 
-export default function OrdersScreen() {
+export default function OrdersScreen({ route }) {
   const {
     purchaseOrders, transferOrders, receivePurchaseOrder, cancelPurchaseOrder,
     approveTransfer, rejectTransfer, pharmacyLocation,
@@ -28,8 +28,10 @@ export default function OrdersScreen() {
   const { canWriteWarehouse, user } = useAuth();
   const { theme } = useTheme();
   const styles = useThemedStyles(makeStyles);
-  const [mode, setMode] = useState('po');
-  const [txStatus, setTxStatus] = useState('All'); // transfer status filter
+  const [mode, setMode] = useState(route?.params?.mode || 'po');
+  useEffect(() => { if (route?.params?.mode) setMode(route.params.mode); }, [route?.params?.mode, route?.params?.request]);
+  const [txStatus, setTxStatus] = useState('All');
+  const [direction, setDirection] = useState('All'); // transfer status filter
   const [viewOrder, setViewOrder] = useState(null);
   const [createOpen, setCreateOpen] = useState(false);
 
@@ -80,7 +82,7 @@ export default function OrdersScreen() {
     );
   }
 
-  const data = mode === 'po' ? purchaseOrders : filterTransfersByStatus(transferOrders, txStatus);
+  const data = mode === 'po' ? purchaseOrders : filterTransfersByStatus(transferOrders, txStatus).filter((t) => direction === 'All' || (direction === 'Returns' ? isReturn(t) : !isReturn(t)));
   const hasMore = mode === 'po' ? poHasMore : toHasMore;
   const onEndReached = mode === 'po' ? loadMorePurchaseOrders : loadMoreTransferOrders;
 
@@ -97,6 +99,7 @@ export default function OrdersScreen() {
           </AnimatedPressable>
         </View>
 
+        {mode === 'transfer' && <View style={styles.filterRow}>{['All', 'Transfers', 'Returns'].map((d) => <AnimatedPressable key={d} style={[styles.filterChip, direction === d && styles.filterChipActive]} onPress={() => setDirection(d)}><Text style={[styles.filterChipText, direction === d && styles.filterChipTextActive]}>{d}</Text></AnimatedPressable>)}</View>}
         {mode === 'transfer' && (
           <View style={styles.filterRow}>
             {TRANSFER_STATUS_FILTERS.map((s) => (
@@ -105,7 +108,7 @@ export default function OrdersScreen() {
                 style={[styles.filterChip, txStatus === s && styles.filterChipActive]}
                 onPress={() => setTxStatus(s)}
               >
-                <Text style={[styles.filterChipText, txStatus === s && styles.filterChipTextActive]}>{s}</Text>
+                <Text style={[styles.filterChipText, txStatus === s && styles.filterChipTextActive]}>{s === 'Completed' ? 'Accepted' : s}</Text>
               </AnimatedPressable>
             ))}
           </View>
@@ -119,7 +122,7 @@ export default function OrdersScreen() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={theme.accent} />}
         onEndReached={onEndReached}
         onEndReachedThreshold={0.4}
-        ListFooterComponent={hasMore ? <ActivityIndicator color={theme.accent} style={styles.footerLoader} /> : null}
+        ListFooterComponent={hasMore ? <AnimatedPressable style={styles.footerLoader} onPress={onEndReached}><Text style={styles.filterChipText}>Load older records</Text><ActivityIndicator color={theme.accent} /></AnimatedPressable> : null}
         ListEmptyComponent={<EmptyState text={mode === 'po' ? 'No purchase orders' : 'No transfer orders'} icon="🛒" />}
         renderItem={({ item, index }) => (
           <AnimatedPressable onPress={() => setViewOrder({ ...item, mode })}>
@@ -175,6 +178,8 @@ export default function OrdersScreen() {
                       {viewOrder.fromLocationName || 'Main Warehouse'}  →  {viewOrder.toLocationName}
                     </Text>
                     <Text style={styles.itemMeta}>Created: {formatDateTime(viewOrder.createdAt)}</Text>
+                    {viewOrder.approvedAt ? <Text style={styles.itemMeta}>Accepted: {formatDateTime(viewOrder.approvedAt)}</Text> : null}
+                    {viewOrder.cancelledAt ? <Text style={styles.itemMeta}>Rejected: {formatDateTime(viewOrder.cancelledAt)}</Text> : null}
                     {viewOrder.createdBy && user?.id && viewOrder.createdBy === user.id ? (
                       <Text style={styles.itemMeta}>Requested by you</Text>
                     ) : null}

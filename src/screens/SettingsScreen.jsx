@@ -1,6 +1,7 @@
 import { Text, View, ScrollView, StyleSheet, Alert } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useAuth } from '../context/AuthContext';
+import appConfig from '../../app.json';
 import { useWarehouse } from '../context/WarehouseContext';
 import { useTheme } from '../context/ThemeContext';
 import { useThemedStyles } from '../theme/useThemedStyles';
@@ -12,14 +13,14 @@ const THEME_OPTIONS = [
 ];
 
 export default function SettingsScreen() {
-  const { user, isPlatformAdmin, clinicName, signOut } = useAuth();
+  const { user, role, isPlatformAdmin, clinicName, signOut } = useAuth();
   const { settings, locations } = useWarehouse();
   const { theme, scheme, setScheme } = useTheme();
   const styles = useThemedStyles(makeStyles);
 
   // Server-verified account type (profiles.is_platform_admin) — never email,
   // never a local flag. Updates automatically when the signed-in user changes.
-  const accountType = isPlatformAdmin ? 'Platform Admin' : 'Clinic Admin';
+  const accountType = isPlatformAdmin ? 'Platform Admin' : ({ admin: 'Clinic Admin', pharmacist: 'Pharmacy Staff', warehouse_manager: 'Warehouse Staff', viewer: 'Viewer' }[role] || 'No assigned role');
 
   function confirmSignOut() {
     Alert.alert('Sign out', 'Sign out of this device?', [
@@ -35,6 +36,7 @@ export default function SettingsScreen() {
 
         <Card index={0} style={styles.card}>
           <Text style={styles.sectionTitle}>Account</Text>
+          <Text style={styles.row}>App version {appConfig.expo.version} ({appConfig.expo.android.versionCode})</Text>
           <Text style={styles.row}>{user?.email}</Text>
           <Text style={styles.roleBadge}>{accountType}</Text>
           {clinicName ? <Text style={styles.row}>{clinicName}</Text> : null}

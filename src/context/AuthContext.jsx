@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { supabase } from '../lib/supabaseClient';
+import { accessFor } from '../lib/management';
 
 const AuthContext = createContext(null);
 
@@ -129,8 +130,7 @@ export function AuthProvider({ children }) {
     isPlatformAdmin,
     clinicId: clinic?.id || null,
     clinicName: clinic?.name || null,
-    canWriteWarehouse: role === 'admin' || role === 'warehouse_manager',
-    canWritePharmacy: role === 'admin' || role === 'pharmacist',
+    ...accessFor(profile),
     loading: session === undefined,
     // signed in but role not yet known — callers gate role-dependent UI on this
     roleResolved: session != null && profileResolved,

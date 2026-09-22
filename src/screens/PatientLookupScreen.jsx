@@ -10,7 +10,7 @@ import { formatCurrency, formatDateTime, formatDate } from '../lib/format';
 import { paymentBucket } from '../lib/pharmacyReports';
 
 export default function PatientLookupScreen() {
-  const { role } = useAuth();
+  const { canManageCredit } = useAuth();
   const { searchPatients, fetchPatientHistory } = usePharmacy();
   const { theme } = useTheme();
   const styles = useThemedStyles(makeStyles);
@@ -24,7 +24,7 @@ export default function PatientLookupScreen() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const debounceRef = useRef(null);
 
-  const authorized = role === 'admin' || role === 'pharmacist';
+  const authorized = canManageCredit;
 
   useEffect(() => {
     if (!authorized) return;

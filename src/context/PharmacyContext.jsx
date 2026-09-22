@@ -1,5 +1,8 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { supabase } from '../lib/supabaseClient';
+import { useAuth } from './AuthContext';
+import { loadCredit, collectCredit } from '../lib/credit';
+import { fetchAllPages } from '../lib/management';
 
 // Pharmacy data layer for VHC Mobile — reads the SAME Supabase tables the
 // Pharmacy POS writes (sales, sale_items, patients). No local copy, no second
@@ -8,12 +11,18 @@ import { supabase } from '../lib/supabaseClient';
 // custom / older date range (never cached, never shown as "current").
 
 const ROLLING_DAYS = 62;      // covers Today .. Last Month with margin
-const ROLLING_BILL_CAP = 4000;
+
 const SALE_SELECT = '*, sale_items(item_id, drug_name, batch_no, category, quantity, rate, total, expiry_date)';
 
 const PharmacyContext = createContext(null);
 
 export function PharmacyProvider({ children }) {
+  const { canManageCredit, canViewReports } = useAuth();
+  const creditRequest = useRef(0);
+  const creditAllowed = useRef(canManageCredit);
+  creditAllowed.current = canManageCredit;
+  const [creditLedger, setCreditLedger] = useState(null);
+  const [creditError, setCreditError] = useState(null);
   const [recentSales, setRecentSales] = useState([]);
   const [salesTruncated, setSalesTruncated] = useState(false);
   const [patientsCount, setPatientsCount] = useState(null);
@@ -31,31 +40,21 @@ export function PharmacyProvider({ children }) {
     since.setDate(since.getDate() - ROLLING_DAYS);
     since.setHours(0, 0, 0, 0);
 
-    const [salesRes, patientsRes, creditRes] = await Promise.all([
-      supabase
-        .from('sales')
-        .select(SALE_SELECT)
-        .gte('sale_date', since.toISOString())
-        .order('sale_date', { ascending: false })
-        .limit(ROLLING_BILL_CAP),
+    if (!canViewReports) { setRecentSales([]); return []; }
+    const [salesRes, patientsRes] = await Promise.all([
+      fetchAllPages(() => supabase.from('sales').select(SALE_SELECT).gte('sale_date', since.toISOString()).order('sale_date', { ascending: false }).order('id')).then((data) => ({ data })),
       supabase.from('patients').select('id', { count: 'exact', head: true }),
-      // All-time Credit-mode bills — the POS has no repayment ledger, so this is
-      // "total ever billed as Credit", surfaced as outstanding credit.
-      supabase.from('sales').select('total_amount').ilike('payment_mode', 'credit'),
     ]);
     if (salesRes.error) throw salesRes.error;
 
     const rows = salesRes.data || [];
     setRecentSales(rows);
-    setSalesTruncated(rows.length >= ROLLING_BILL_CAP);
+    setSalesTruncated(false);
     if (!patientsRes.error) setPatientsCount(patientsRes.count ?? null);
-    if (!creditRes.error) {
-      const list = creditRes.data || [];
-      setCreditOutstanding({ total: list.reduce((s, r) => s + (Number(r.total_amount) || 0), 0), count: list.length });
-    }
+
     setAsOf(new Date());
     return rows;
-  }, []);
+  }, [canViewReports]);
 
   // one in-flight + one queued follow-up (same pattern as WarehouseContext)
   const refreshRolling = useCallback(() => {
@@ -107,7 +106,7 @@ export function PharmacyProvider({ children }) {
     const schedule = () => {
       if (debounce) clearTimeout(debounce);
       debounce = setTimeout(() => {
-        refreshRolling().then(() => setLoadError(null)).catch((e) => console.error('Pharmacy realtime refresh failed:', e));
+        refreshRolling().then(() => setLoadError(null)).catch((e) => setLoadError(e.message || 'Live refresh failed'));
       }, 1500);
     };
     const channel = supabase
@@ -125,15 +124,12 @@ export function PharmacyProvider({ children }) {
   // Returns fresh rows every call; never merged into the cache, never treated
   // as the live snapshot.
   const fetchSalesRange = useCallback(async (fromDate, toDate) => {
-    const { data, error } = await supabase
-      .from('sales')
-      .select(SALE_SELECT)
-      .gte('sale_date', new Date(fromDate).toISOString())
-      .lte('sale_date', new Date(toDate).toISOString())
-      .order('sale_date', { ascending: false })
-      .limit(20000);
-    if (error) return { sales: null, error: error.message || String(error) };
-    return { sales: data || [], error: null };
+    try {
+      const rows = await fetchAllPages(() => supabase.from('sales').select(SALE_SELECT)
+        .gte('sale_date', new Date(fromDate).toISOString()).lte('sale_date', new Date(toDate).toISOString())
+        .order('sale_date', { ascending: false }).order('id'));
+      return { sales: rows, error: null };
+    } catch (e) { return { sales: null, error: e.message || String(e) }; }
   }, []);
 
   const searchPatients = useCallback(async (query) => {
@@ -151,18 +147,39 @@ export function PharmacyProvider({ children }) {
     return { patients: data || [], error: null };
   }, []);
 
-  // All-time Credit-mode bills (the POS has no repayment ledger). On demand,
-  // never cached as "current" — the CreditScreen re-fetches on focus / pull.
-  const fetchCreditBills = useCallback(async () => {
-    const { data, error } = await supabase
-      .from('sales')
-      .select('id, bill_id, patient_id, patient_name, payment_mode, total_amount, sale_date')
-      .ilike('payment_mode', 'credit')
-      .order('sale_date', { ascending: false })
-      .limit(5000);
-    if (error) return { sales: null, error: error.message || String(error) };
-    return { sales: data || [], error: null };
-  }, []);
+  const refreshCredit = useCallback(async () => {
+    const request = ++creditRequest.current;
+    if (!canManageCredit) { setCreditLedger(null); setCreditOutstanding({ total: 0, count: 0 }); return null; }
+    try {
+      const ledger = await loadCredit(supabase);
+      if (request !== creditRequest.current || !creditAllowed.current) return null;
+      setCreditLedger(ledger);
+      setCreditOutstanding({ total: ledger.total, count: ledger.count });
+      setCreditError(null);
+      return ledger;
+    } catch (e) {
+      if (request !== creditRequest.current || !creditAllowed.current) return null;
+      setCreditLedger(null);
+      setCreditError(e.message || 'Credit ledger unavailable');
+      return null;
+    }
+  }, [canManageCredit]);
+
+  useEffect(() => {
+    refreshCredit();
+    if (!canManageCredit) return;
+    const channel = supabase.channel('management-credit')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'credit_payments' }, refreshCredit)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'sales' }, refreshCredit).subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [canManageCredit, refreshCredit]);
+
+  const collectPayment = useCallback(async (payment) => {
+    if (!canManageCredit) throw new Error('Credit collection requires an admin.');
+    const result = await collectCredit(supabase, payment);
+    await refreshCredit();
+    return result;
+  }, [canManageCredit, refreshCredit]);
 
   const fetchPatientHistory = useCallback(async (patientId) => {
     if (!patientId) return { sales: [], error: null };
@@ -177,11 +194,12 @@ export function PharmacyProvider({ children }) {
   }, []);
 
   const value = useMemo(() => ({
+    creditLedger, creditError, collectPayment,
     recentSales, salesTruncated, patientsCount, creditOutstanding,
     loading, refreshing, loadError, asOf,
-    refresh, fetchSalesRange, searchPatients, fetchPatientHistory, fetchCreditBills,
+    refresh, fetchSalesRange, searchPatients, fetchPatientHistory, refreshCredit,
     rollingDays: ROLLING_DAYS,
-  }), [recentSales, salesTruncated, patientsCount, creditOutstanding, loading, refreshing, loadError, asOf, refresh, fetchSalesRange, searchPatients, fetchPatientHistory, fetchCreditBills]);
+  }), [creditLedger, creditError, collectPayment, recentSales, salesTruncated, patientsCount, creditOutstanding, loading, refreshing, loadError, asOf, refresh, fetchSalesRange, searchPatients, fetchPatientHistory, refreshCredit]);
 
   return <PharmacyContext.Provider value={value}>{children}</PharmacyContext.Provider>;
 }

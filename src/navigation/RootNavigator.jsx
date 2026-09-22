@@ -51,16 +51,16 @@ function useStackScreenOptions() {
 }
 
 function PharmacyStack() {
-  const { role } = useAuth();
+  const { canViewReports, canManageCredit, canViewInventory } = useAuth();
   const screenOptions = useStackScreenOptions();
-  const canSeePatients = role === 'admin' || role === 'pharmacist';
+  const canSeePatients = canManageCredit;
   return (
     <Stack.Navigator screenOptions={screenOptions}>
-      <Stack.Screen name="Pharmacy Home" component={PharmacyDashboardScreen} options={{ headerShown: false }} />
-      <Stack.Screen name="Sales & Reports" component={SalesReportsScreen} />
-      <Stack.Screen name="Inventory Intelligence" component={InventoryIntelligenceScreen} />
-      <Stack.Screen name="Pharmacy Stock" component={PharmacyStockScreen} />
-      <Stack.Screen name="Pending Stock Requests" component={PendingTransfersScreen} />
+      {canManageCredit && <Stack.Screen name="Pharmacy Home" component={PharmacyDashboardScreen} options={{ headerShown: false }} />}
+      {canViewReports && <Stack.Screen name="Sales & Reports" component={SalesReportsScreen} />}
+      {canManageCredit && <Stack.Screen name="Inventory Intelligence" component={InventoryIntelligenceScreen} />}
+      {canViewInventory && <Stack.Screen name="Pharmacy Stock" component={PharmacyStockScreen} />}
+      {canViewInventory && <Stack.Screen name="Pending Stock Requests" component={PendingTransfersScreen} />}
       {canSeePatients && <Stack.Screen name="Patient Lookup" component={PatientLookupScreen} />}
       {canSeePatients && <Stack.Screen name="Credit / Outstanding" component={CreditScreen} />}
     </Stack.Navigator>
@@ -93,6 +93,7 @@ function MoreStack() {
 }
 
 export default function RootNavigator() {
+  const { canViewReports, canViewInventory } = useAuth();
   const insets = useSafeAreaInsets();
   const { theme, isDark } = useTheme();
   // Tab-badge nudges for stock requests awaiting a decision:
@@ -144,24 +145,24 @@ export default function RootNavigator() {
           ),
         })}
       >
-        <Tab.Screen name="Home" component={HomeScreen} />
-        <Tab.Screen
+        {canViewReports && <Tab.Screen name="Home" component={HomeScreen} />}
+        {(canViewReports || canViewInventory) && <Tab.Screen
           name="Pharmacy"
           component={PharmacyStack}
           options={{
             tabBarBadge: pendingCount > 0 ? pendingCount : undefined,
             tabBarBadgeStyle: { backgroundColor: theme.warning, color: theme.onAccent, fontSize: 10 },
           }}
-        />
-        <Tab.Screen
+        />}
+        {canViewInventory && <Tab.Screen
           name="Warehouse"
           component={WarehouseStack}
           options={{
             tabBarBadge: returnCount > 0 ? returnCount : undefined,
             tabBarBadgeStyle: { backgroundColor: theme.warning, color: theme.onAccent, fontSize: 10 },
           }}
-        />
-        <Tab.Screen name="Alerts" component={AlertsScreen} />
+        />}
+        {canViewInventory && <Tab.Screen name="Alerts" component={AlertsScreen} />}
         <Tab.Screen name="More" component={MoreStack} />
       </Tab.Navigator>
     </NavigationContainer>

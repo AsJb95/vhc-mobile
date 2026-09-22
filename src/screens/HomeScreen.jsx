@@ -1,147 +1,106 @@
-import { useMemo } from 'react';
-import { ScrollView, View, Text, StyleSheet, RefreshControl } from 'react-native';
-import { MotiView } from 'moti';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { ScrollView, View, Text, TextInput, StyleSheet, RefreshControl } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { useWarehouse } from '../context/WarehouseContext';
 import { usePharmacy } from '../context/PharmacyContext';
+import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { useThemedStyles } from '../theme/useThemedStyles';
-import { Card, StatCard, Screen, ScreenLoading, AnimatedPressable } from '../components/UI';
-import { KeyVal, SectionTitle, AsOf } from '../components/Bits';
+import { Card, Screen, ScreenLoading, AnimatedPressable } from '../components/UI';
+import { KeyVal, SectionTitle, AsOf, ChipTabs } from '../components/Bits';
 import { formatCurrency } from '../lib/format';
-import { periodRange, filterSalesByRange, summarizeSales, buildCostLookup, PAYMENT_BUCKETS } from '../lib/pharmacyReports';
+import { periodRange, filterSalesByRange, summarizeSales, PAYMENT_BUCKETS } from '../lib/pharmacyReports';
 import { classifyPharmacyStock } from '../lib/pharmacyStock';
+import { expiryExposure, stockValuation, validBusinessDate } from '../lib/management';
 
-// Unified overview of BOTH systems. Compact — the most important number per
-// area, each card tappable through to its detail screen.
+const PERIODS = [{ key: 'today', label: 'Today' }, { key: 'yesterday', label: 'Yesterday' }, { key: 'thismonth', label: 'This Month' }, { key: 'customday', label: 'Custom Date' }];
 export default function HomeScreen({ navigation }) {
-  const {
-    mainStock, purchaseOrders, transferOrders, settings, pharmacyStock,
-    getAlerts, getTotalValue, getSubStockValue,
-    loading: whLoading, refreshing: whRefreshing, refresh: whRefresh, loadError: whError,
-  } = useWarehouse();
-  const {
-    recentSales, creditOutstanding, asOf, loading: phLoading, refreshing: phRefreshing, refresh: phRefresh, loadError: phError,
-  } = usePharmacy();
+  const { mainStock, pharmacyStock, transferOrders, toHasMore, stockTruncated, pharmacyLocation,
+    loading: whLoading, refreshing: whRefreshing, refresh: whRefresh, loadError: whError } = useWarehouse();
+  const { recentSales, creditLedger, creditError, refreshCredit, asOf, fetchSalesRange,
+    loading: phLoading, refreshing: phRefreshing, refresh: phRefresh, loadError: phError } = usePharmacy();
+  const { canManageCredit, canViewInventory } = useAuth();
   const { theme } = useTheme();
   const styles = useThemedStyles(makeStyles);
-
-  const today = useMemo(() => {
-    const { from, to } = periodRange('today');
-    return summarizeSales(filterSalesByRange(recentSales, from, to), buildCostLookup(pharmacyStock));
-  }, [recentSales, pharmacyStock]);
-
-  const phAlerts = useMemo(
-    () => classifyPharmacyStock(pharmacyStock, settings.expiryAlertDays),
-    [pharmacyStock, settings.expiryAlertDays],
-  );
-
-  const wh = useMemo(() => {
-    const a = getAlerts();
-    return {
-      alerts: a,
-      activeAlerts: a.lowStock.length + a.outOfStock.length + a.expiring.length + a.expired.length,
-      totalValue: getTotalValue(),
-      pendingPOs: purchaseOrders.filter((o) => o.status === 'Pending').length,
-      subStockValue: settings.subStockLocations.reduce((s, l) => s + getSubStockValue(l.id), 0),
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mainStock, purchaseOrders, settings.lowStockThreshold, settings.expiryAlertDays, settings.subStockLocations]);
-
+  const [period, setPeriod] = useState('today');
+  const [day, setDay] = useState('');
+  const [days, setDays] = useState(90);
+  const [custom, setCustom] = useState(null);
+  const [clock, setClock] = useState(Date.now());
+  useFocusEffect(useCallback(() => { setClock(Date.now()); }, []));
+  useEffect(() => { const timer = setInterval(() => setClock(Date.now()), 60000); return () => clearInterval(timer); }, []);
+  const range = useMemo(() => period === 'customday' && !validBusinessDate(day) ? null : periodRange(period, { day, now: clock }), [period, day, clock]);
+  useEffect(() => {
+    let active = true;
+    if (period !== 'customday' || !validBusinessDate(day)) return;
+    setCustom(null);
+    const bounds = periodRange('customday', { day });
+    fetchSalesRange(bounds.from, bounds.to).then((res) => { if (active) setCustom({ ...res, day }); });
+    return () => { active = false; };
+  }, [period, day, fetchSalesRange, asOf]);
+  const selectedSales = period === 'customday' ? (custom?.day === day ? custom.sales : null) : recentSales;
+  const summary = range && selectedSales ? summarizeSales(filterSalesByRange(selectedSales, range.from, range.to)) : null;
+  const comparisons = PERIODS.slice(0, 3).map((p) => {
+    const r = periodRange(p.key, { now: clock });
+    return { ...p, ...summarizeSales(filterSalesByRange(recentSales, r.from, r.to)) };
+  });
+  const phValue = stockValuation(pharmacyStock, true);
+  const whValue = stockValuation(mainStock);
+  const phExpiry = expiryExposure(pharmacyStock, days, true);
+  const whExpiry = expiryExposure(mainStock, days);
+  const phAlerts = classifyPharmacyStock(pharmacyStock, days);
+  const collections = creditLedger && range ? creditLedger.payments.filter((p) => new Date(p.created_at) >= range.from && new Date(p.created_at) <= range.to) : null;
+  const collected = collections?.reduce((sum, p) => sum + Number(p.amount), 0);
+  const report = (key = period) => navigation.navigate('Pharmacy', { screen: 'Sales & Reports', params: { period: key, day, request: Date.now() } });
+  const stock = () => navigation.navigate('Pharmacy', { screen: 'Pharmacy Stock' });
+  const transfers = () => navigation.navigate('Warehouse', { screen: 'Orders', params: { mode: 'transfer', request: Date.now() } });
+  const refresh = () => { setClock(Date.now()); whRefresh(); phRefresh(); refreshCredit(); };
   if (whLoading || phLoading) return <ScreenLoading />;
-
-  const refreshing = whRefreshing || phRefreshing;
-  const onRefresh = () => { whRefresh(); phRefresh(); };
-  const toPharmacy = (screen) => () => navigation.navigate('Pharmacy', screen ? { screen } : undefined);
-  const toWarehouse = (screen) => () => navigation.navigate('Warehouse', screen ? { screen } : undefined);
-
-  return (
-    <Screen>
-      <ScrollView
-        contentContainerStyle={styles.content}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.accent} />}
-      >
-        <MotiView from={{ opacity: 0, translateY: -8 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 300 }}>
-          <Text style={styles.title}>VHC Overview</Text>
-        </MotiView>
-        <AsOf at={asOf} />
-        {phError ? <Text style={styles.errorBanner}>Pharmacy data unavailable — {phError}</Text> : null}
-        {whError ? <Text style={styles.errorBanner}>Warehouse data unavailable — {whError}</Text> : null}
-
-        {/* ---- Pharmacy ---- */}
-        <Text style={styles.sectionHead}>Pharmacy</Text>
-        <View style={styles.statGrid}>
-          <StatCard index={0} label="Today's Sales" value={formatCurrency(today.totalSales)} color={theme.success} />
-          <StatCard index={1} label="Today's Bills" value={today.billCount} color={theme.accent} />
-        </View>
-        <AnimatedPressable onPress={toPharmacy('Sales & Reports')}>
-          <Card index={2} style={styles.card}>
-            <SectionTitle right={<Text style={styles.link}>Reports ›</Text>}>Today — Payments</SectionTitle>
-            <View style={styles.payRow}>
-              {PAYMENT_BUCKETS.map((b) => (
-                <View key={b} style={styles.payCell}>
-                  <Text style={styles.payVal}>{formatCurrency(today.payments[b] || 0)}</Text>
-                  <Text style={styles.payLabel}>{b}</Text>
-                </View>
-              ))}
-            </View>
-          </Card>
-        </AnimatedPressable>
-        <AnimatedPressable onPress={toPharmacy('Pharmacy Stock')}>
-          <Card index={3} style={styles.card}>
-            <SectionTitle right={<Text style={styles.link}>Stock ›</Text>}>Pharmacy Stock</SectionTitle>
-            <KeyVal label="Low stock" value={phAlerts.low.length} color={theme.warning} />
-            <KeyVal label="Out of stock" value={phAlerts.outOfStock.length} color={theme.danger} />
-            <KeyVal label="Expiring soon" value={phAlerts.expiring.length} color={theme.accent} />
-          </Card>
-        </AnimatedPressable>
-        <AnimatedPressable onPress={toPharmacy('Credit / Outstanding')}>
-          <Card index={4} style={styles.card}>
-            <KeyVal label="Outstanding credit (all-time)" value={formatCurrency(creditOutstanding.total)} strong color={theme.warning} />
-            <Text style={styles.hint}>{creditOutstanding.count} Credit-mode bills · no repayment tracking</Text>
-          </Card>
-        </AnimatedPressable>
-
-        {/* ---- Warehouse ---- */}
-        <Text style={styles.sectionHead}>Warehouse</Text>
-        <View style={styles.statGrid}>
-          <StatCard index={0} label="Main Stock Items" value={mainStock.length} color={theme.accent} />
-          <StatCard index={1} label="Main Stock Value" value={formatCurrency(wh.totalValue)} color={theme.success} />
-          <StatCard index={2} label="Active Alerts" value={wh.activeAlerts} sub={`${wh.alerts.expired.length} expired · ${wh.alerts.outOfStock.length} out`} color={theme.danger} />
-          <StatCard index={3} label="Pending POs" value={wh.pendingPOs} sub={`${purchaseOrders.length} total`} color={theme.warning} />
-        </View>
-        <AnimatedPressable onPress={toWarehouse('Orders')}>
-          <Card index={4} style={styles.card}>
-            <KeyVal label="Transfers recorded" value={transferOrders.length} />
-            <KeyVal label="Sub-stock value" value={formatCurrency(wh.subStockValue)} />
-            <Text style={styles.hint}>Tap for transfer &amp; purchase-order history.</Text>
-          </Card>
-        </AnimatedPressable>
-        <AnimatedPressable onPress={toWarehouse('Sub-Stock Locations')}>
-          <Card index={5} style={styles.card}>
-            <View style={styles.rowBetween}>
-              <Text style={styles.cardLink}>Sub-Stock Locations ({settings.subStockLocations.length})</Text>
-              <Text style={styles.link}>Open ›</Text>
-            </View>
-          </Card>
-        </AnimatedPressable>
-      </ScrollView>
-    </Screen>
-  );
+  return <Screen><ScrollView contentContainerStyle={styles.content} refreshControl={<RefreshControl refreshing={whRefreshing || phRefreshing} onRefresh={refresh} tintColor={theme.accent} />}>
+    <Text style={styles.title}>VHC Management</Text>
+    <Text style={styles.meta}>{new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'long' }).format(clock)} · India time</Text>
+    <AsOf at={asOf} />
+    {phError || whError ? <Text style={styles.error}>Refresh failed. Figures may be stale: {phError || whError}</Text> : null}
+    <View style={styles.grid}>{comparisons.map((p) => <AnimatedPressable key={p.key} style={styles.tile} onPress={() => report(p.key)}><Text style={styles.meta}>{p.label} Revenue</Text><Text style={styles.number}>{asOf ? formatCurrency(p.totalSales) : 'Unavailable'}</Text><Text style={styles.link}>View bills ›</Text></AnimatedPressable>)}</View>
+    <ChipTabs options={PERIODS} value={period} onChange={setPeriod} />
+    {period === 'customday' ? <TextInput style={styles.input} placeholder="YYYY-MM-DD" placeholderTextColor={theme.muted} value={day} onChangeText={setDay} /> : null}
+    {!range ? <Text style={styles.error}>Enter a valid date as YYYY-MM-DD.</Text> : null}
+    {custom?.error && period === 'customday' ? <Text style={styles.error}>{custom.error}</Text> : null}
+    <AnimatedPressable onPress={() => range && report()}><Card style={styles.card}>
+      <SectionTitle right={<Text style={styles.link}>Details ›</Text>}>{range?.label || 'Choose date'} — Owner Summary</SectionTitle>
+      <KeyVal label="Sales" value={summary && asOf ? formatCurrency(summary.totalSales) : 'Unavailable'} strong />
+      <KeyVal label="Bills" value={summary?.billCount ?? '—'} /><KeyVal label="Average bill" value={summary ? formatCurrency(summary.avgBill) : '—'} />
+      {[...PAYMENT_BUCKETS, 'Other'].map((b) => <KeyVal key={b} label={b === 'Credit' ? 'Credit sales' : b} value={summary ? formatCurrency(summary.payments[b]) : '—'} />)}
+      {canManageCredit ? <><KeyVal label="Credit collected" value={collections ? formatCurrency(collected) : 'Unavailable'} />
+        {['Cash', 'UPI', 'Card'].map((m) => <KeyVal key={m} label={`Collections · ${m}`} value={collections ? formatCurrency(collections.filter((p) => p.payment_mode === m).reduce((sum, p) => sum + Number(p.amount), 0)) : '—'} />)}</> : null}
+      <Text style={styles.meta}>Collections are repayments, separate from sales. Expenses and historical purchase cost are not connected.</Text>
+    </Card></AnimatedPressable>
+    {canManageCredit ? <AnimatedPressable onPress={() => navigation.navigate('Pharmacy', { screen: 'Credit / Outstanding' })}><Card style={styles.card}><KeyVal label="Pending credit · all time" value={creditLedger ? formatCurrency(creditLedger.total) : 'Unavailable'} strong /><Text style={styles.link}>Collect payment / repayment history ›</Text>{creditError ? <Text style={styles.error}>Credit ledger needs connection.</Text> : null}</Card></AnimatedPressable> : null}
+    {canViewInventory ? <>
+      <AnimatedPressable onPress={stock}><Card style={styles.card}>
+        <SectionTitle>Current Stock · Purchase Value</SectionTitle>
+        {!pharmacyLocation ? <Text style={styles.error}>Pharmacy location not configured.</Text> : null}
+        <KeyVal label="Pharmacy" value={formatCurrency(phValue.value)} /><KeyVal label="Main warehouse" value={formatCurrency(whValue.value)} />
+        <KeyVal label="Low / critical pharmacy batches" value={phAlerts.low.length + phAlerts.critical.length} />
+        <KeyVal label="Out-of-stock pharmacy batches" value={phAlerts.outOfStock.length} />
+        {phValue.missingCost + whValue.missingCost > 0 ? <Text style={styles.error}>{phValue.missingCost + whValue.missingCost} batches have no cost; values are partial.</Text> : null}
+        {stockTruncated ? <Text style={styles.error}>Stock list is incomplete; totals are partial.</Text> : null}
+      </Card></AnimatedPressable>
+      <Card style={styles.card}><SectionTitle>Expiry · Stock Value at Risk</SectionTitle>
+        <ChipTabs options={[30, 60, 90, 180].map((n) => ({ key: n, label: `${n} days` }))} value={days} onChange={setDays} />
+        <KeyVal label={`Pharmacy · ${phExpiry.batches.length} batches`} value={formatCurrency(phExpiry.value)} />
+        <KeyVal label={`Warehouse · ${whExpiry.batches.length} batches`} value={formatCurrency(whExpiry.value)} />
+        <Text style={styles.meta}>In-stock batches expiring today through {days} days. Already expired stock is excluded. Missing costs are excluded from values.</Text>
+      </Card>
+      <AnimatedPressable onPress={transfers}><Card style={styles.card}><SectionTitle>Transfers & Returns</SectionTitle><KeyVal label="Pending in loaded history" value={transferOrders.filter((t) => t.status === 'Pending').length} /><Text style={styles.link}>Pending · Accepted · Rejected · Returns ›</Text><Text style={styles.meta}>{transferOrders.length} records loaded{toHasMore ? ' · Older records available in history' : ''}</Text></Card></AnimatedPressable>
+    </> : null}
+  </ScrollView></Screen>;
 }
-
 const makeStyles = (t) => StyleSheet.create({
-  content: { padding: 16, paddingBottom: 40 },
-  title: { color: t.text, fontSize: 28, fontWeight: '800', letterSpacing: -0.5, marginBottom: 4 },
-  errorBanner: { color: t.warning, fontSize: 12, marginBottom: 8 },
-  sectionHead: { color: t.muted, fontSize: 12, fontWeight: '800', letterSpacing: 1, textTransform: 'uppercase', marginTop: 14, marginBottom: 10 },
-  statGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
-  card: { marginBottom: 12 },
-  link: { color: t.accent, fontSize: 12, fontWeight: '700' },
-  cardLink: { color: t.text, fontSize: 15, fontWeight: '700' },
-  rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  hint: { color: t.muted, fontSize: 11, marginTop: 8, fontStyle: 'italic' },
-  payRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 6 },
-  payCell: { flex: 1, backgroundColor: t.chip, borderRadius: 12, borderWidth: 1, borderColor: t.panelBorder, padding: 8, alignItems: 'center' },
-  payVal: { color: t.text, fontSize: 12, fontWeight: '800' },
-  payLabel: { color: t.muted, fontSize: 10, marginTop: 2 },
+  content: { padding: 16, paddingBottom: 40 }, title: { color: t.text, fontWeight: '800', fontSize: 28 },
+  meta: { color: t.muted, fontSize: 12, marginVertical: 6 }, error: { color: t.warning, fontSize: 12, marginVertical: 8 },
+  card: { marginVertical: 10 }, grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginVertical: 12 },
+  tile: { flexGrow: 1, flexBasis: '45%', backgroundColor: t.panel, borderRadius: 16, borderWidth: 1, borderColor: t.panelBorder, padding: 14 },
+  number: { color: t.text, fontWeight: '800', fontSize: 22, marginVertical: 6 }, link: { color: t.accent, fontWeight: '700', fontSize: 12 },
+  input: { color: t.text, padding: 14, borderWidth: 1, borderColor: t.panelBorder, borderRadius: 12, marginTop: 12 },
 });

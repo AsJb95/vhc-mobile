@@ -3,12 +3,12 @@ const pad2 = (n) => String(n).padStart(2, '0');
 
 // Hermes normally ships Intl with ICU on modern Expo SDKs, but guard anyway so a
 // build without it degrades to a plain format instead of throwing.
-export function formatCurrency(amount) {
+export function formatCurrency(amount, fractionDigits = 0) {
   const n = Number(amount) || 0;
   try {
-    return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n);
+    return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: fractionDigits, maximumFractionDigits: fractionDigits }).format(n);
   } catch {
-    return `₹${Math.round(n).toLocaleString('en-IN')}`;
+    return `₹${n.toFixed(fractionDigits)}`;
   }
 }
 

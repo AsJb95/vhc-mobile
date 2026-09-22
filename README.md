@@ -1,8 +1,22 @@
-# VHC Warehouse — Mobile
+# VHC Mobile
 
-Expo (SDK 57) / React Native companion app for the VHC Warehouse + Pharmacy
-Supabase backend. Read-through dashboards plus stock, orders, alerts, and
-admin/backup tooling.
+VHC's Expo SDK 57 / React Native management app for Pharmacy and Warehouse.
+It provides owner dashboards, sales and payment reports, credit collection,
+inventory intelligence, stock transfers, expiry alerts, and role-based access
+against the shared VHC Supabase backend.
+
+Download installable Android builds from the GitHub Releases page. See
+[CHANGELOG.md](CHANGELOG.md) for the complete version history.
+
+## Phase 1 features
+
+- Unified owner dashboard with Today, Yesterday, This Month, and custom dates
+- Cash, UPI, Card, Credit, and credit-collection breakdowns
+- Part payment, full settlement, and repayment history for credit bills
+- Pharmacy and warehouse stock valuation with pack/unit conversion
+- 30, 60, 90, and 180-day expiry exposure and value at risk
+- Pending, accepted, rejected, and returned transfer history
+- Platform Admin, Clinic Admin, Pharmacy Staff, Warehouse Staff, and Viewer roles
 
 ## Requirements
 

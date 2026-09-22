@@ -3,8 +3,9 @@ import { Alert } from 'react-native';
 import { supabase } from '../lib/supabaseClient';
 import { computeStockValue } from '../lib/format';
 import { findPharmacyLocation, isRetiredLocation } from '../lib/locations';
-import { planPharmacyTransferLines, planStockReturnLines, isStockReturn } from '../lib/transfers';
+import { planPharmacyTransferLines, planStockReturnLines, isStockReturn, resolveAcceptedLine } from '../lib/transfers';
 import { useAuth } from './AuthContext';
+import { fetchAllPages } from '../lib/management';
 
 // Whether transfer_orders.created_by / approved_by / cancelled_by(+_at) exist on
 // the live database (migration 20260904000100_transfer_created_by.sql). Probed
@@ -62,7 +63,7 @@ function batchEq(query, batch) {
 // (newest first) with "load more"; stock is capped high enough to hold the full
 // catalog at one location while still refusing a runaway result set.
 const HISTORY_PAGE_SIZE = 200;
-const STOCK_FETCH_CAP = 5000;
+
 
 function mapPurchaseOrderRow(po) {
   return {
@@ -102,6 +103,7 @@ function mapTransferOrderRow(to, locs) {
     cancelledAt: to.cancelled_at || null,
     items: (to.transfer_order_items || []).map((i) => ({
       mainStockId: i.item_id, name: i.name, batch: i.batch_no, expiry: i.expiry_date, mrp: i.mrp, netRate: i.net_rate, qty: i.qty,
+      unitsPerPack: i.units_per_pack ?? null, transferUnit: i.transfer_unit ?? null,
     })),
   };
 }
@@ -120,7 +122,7 @@ const WarehouseContext = createContext(null);
 export function WarehouseProvider({ children }) {
   // Current signed-in user — stamped onto transfer audit columns (created_by /
   // approved_by / cancelled_by). AuthProvider wraps WarehouseProvider in App.js.
-  const { user } = useAuth();
+  const { user, canWriteWarehouse, canWritePharmacy } = useAuth();
   const [locations, setLocations] = useState([]);
   const [mainStock, setMainStock] = useState([]);
   const [subStocks, setSubStocks] = useState({});
@@ -178,10 +180,10 @@ export function WarehouseProvider({ children }) {
 
     const [mainRes, subRes, poRes, toRes, alertsRes] = await Promise.all([
       main
-        ? supabase.from('stock_batches').select('*, items(name, category, hsn_code, units_per_pack)').eq('location_id', main.id).order('updated_at', { ascending: false }).limit(STOCK_FETCH_CAP)
+        ? fetchAllPages(() => supabase.from('stock_batches').select('*, items(name, category, hsn_code, units_per_pack)').eq('location_id', main.id).order('id')).then((data) => ({ data }))
         : Promise.resolve({ data: [] }),
       stockSubLocs.length > 0
-        ? supabase.from('stock_batches').select('*, items(name, category, hsn_code, units_per_pack)').in('location_id', stockSubLocs.map((s) => s.id)).order('updated_at', { ascending: false }).limit(STOCK_FETCH_CAP)
+        ? fetchAllPages(() => supabase.from('stock_batches').select('*, items(name, category, hsn_code, units_per_pack)').in('location_id', stockSubLocs.map((s) => s.id)).order('id')).then((data) => ({ data }))
         : Promise.resolve({ data: [] }),
       supabase.from('purchase_orders').select('*, purchase_order_items(*)').order('created_at', { ascending: false }).range(0, poLimit - 1),
       supabase.from('transfer_orders').select('*, transfer_order_items(*)').order('created_at', { ascending: false }).range(0, toLimit - 1),
@@ -198,7 +200,7 @@ export function WarehouseProvider({ children }) {
     const mainRows = mainRes.data || [];
     const subRows = subRes.data || [];
     setMainStock(mainRows.map(rowToMainItem));
-    setStockTruncated(mainRows.length >= STOCK_FETCH_CAP || subRows.length >= STOCK_FETCH_CAP);
+    setStockTruncated(false);
 
     const grouped = {};
     for (const s of stockSubLocs) grouped[s.id] = [];
@@ -876,6 +878,7 @@ export function WarehouseProvider({ children }) {
     const itemRows = lines.map((line) => ({
       transfer_order_id: reqRow.id, item_id: line.itemId, name: line.name,
       batch_no: line.batch, expiry_date: line.expiry, mrp: line.mrp, net_rate: line.netRate, qty: line.qty,
+      units_per_pack: line.unitsPerPack ?? null, transfer_unit: line.transferUnit ?? null,
     }));
     const { error: lineErr } = await supabase.from('transfer_order_items').insert(itemRows);
     if (lineErr) {
@@ -895,15 +898,56 @@ export function WarehouseProvider({ children }) {
   // is the single guard against a double accept or accepting a rejected row —
   // safe to open / accept the same request from multiple devices. Nothing moves
   // until this runs. `sourceLabel` / `destLabel` / `reasonTag` are wording only.
-  async function acceptPendingTransfer(transferId, { sourceLocId, destLocId, sourceLabel, destLabel, reasonTag }) {
+  // `sourceIsStrips` (true for Warehouse->Pharmacy, false for the reverse
+  // return): which side of this accept is strip-based, so the DESTINATION
+  // addition can be converted from the SOURCE deduction via each line's own
+  // snapshotted units_per_pack. A line with no transfer_unit snapshot (created
+  // before this feature, or before migration_transfer_units.sql was applied)
+  // is treated as a straight 1:1 passthrough — exactly the historical
+  // behavior, never reinterpreted.
+  async function acceptPendingTransfer(transferId, { sourceLocId, destLocId, sourceLabel, destLabel, reasonTag, sourceIsStrips = true }) {
     const t = transferOrders.find((x) => x.id === transferId);
     if (!t) throw new Error('Request not found — refresh and try again.');
     if (t.status !== 'Pending') throw new Error(`This request is already "${t.status}".`);
     if (!sourceLocId || !destLocId) throw new Error('Transfer locations are not configured.');
 
+    // Fresh, explicit-column read of this transfer's line items — never trust
+    // whatever shape happens to be cached in React state for the conversion
+    // fields. A wildcard select fetched while PostgREST's schema cache hadn't
+    // yet picked up a recent migration can silently omit units_per_pack /
+    // transfer_unit from the response (not an error — just a narrower row),
+    // which would misfire the legacy-passthrough branch below on a brand-new
+    // row that actually has real conversion data in Postgres. Naming every
+    // column here means that kind of staleness surfaces as a normal, current
+    // read, not as silently-wrong stock computed from stale cached state.
+    const { data: freshRows, error: freshErr } = await supabase
+      .from('transfer_order_items')
+      .select('id, item_id, name, batch_no, expiry_date, mrp, net_rate, qty, units_per_pack, transfer_unit')
+      .eq('transfer_order_id', transferId);
+    if (freshErr) throw freshErr;
+    if (!freshRows || freshRows.length === 0) {
+      throw new Error('Request has no line items — refresh and try again.');
+    }
+
+    // Validate + resolve every line BEFORE touching any stock, via the same
+    // pure helper the test suite exercises directly (lib/transfers.js). A
+    // malformed new-style row throws here — before any stock read or write —
+    // rather than silently falling back to a 1:1 passthrough; that silent
+    // fallback, triggered by a stale-cache read instead of a genuinely legacy
+    // row, is exactly what caused the Test 2 failure.
+    const items = freshRows.map((row) => {
+      const line = {
+        mainStockId: row.item_id, name: row.name, batch: row.batch_no, expiry: row.expiry_date,
+        mrp: row.mrp, netRate: row.net_rate, qty: row.qty,
+        unitsPerPack: row.units_per_pack ?? null, transferUnit: row.transfer_unit ?? null,
+      };
+      const resolved = resolveAcceptedLine(line, { sourceIsStrips });
+      return { ...line, qty: resolved.qty, destQty: resolved.destQty, converted: resolved.converted };
+    });
+
     const plan = [];
-    for (const line of t.items) {
-      const qty = Math.max(0, line.qty || 0);
+    for (const line of items) {
+      const qty = line.qty;
       if (qty === 0) continue;
       const { data: src, error: srcErr } = await batchEq(
         supabase.from('stock_batches').select('id, qty, gst, stockist').eq('item_id', line.mainStockId).eq('location_id', sourceLocId),
@@ -914,7 +958,7 @@ export function WarehouseProvider({ children }) {
         await fetchAll().catch(() => {});
         throw new Error(`${sourceLabel} for "${line.name}" changed — only ${src?.qty || 0} available (need ${qty}). Accept blocked; refresh and verify.`);
       }
-      plan.push({ line, qty, src });
+      plan.push({ line, qty, destQty: line.destQty, converted: line.converted, src });
     }
 
     const { data: claimed, error: claimErr } = await supabase
@@ -932,7 +976,10 @@ export function WarehouseProvider({ children }) {
     markTransferStatusLocally(transferId, 'Completed');
 
     const problems = [];
-    for (const { line, qty, src } of plan) {
+    for (const { line, qty, destQty, converted, src } of plan) {
+      const conversionNote = converted
+        ? ` [${line.transferUnit} entered; ${line.unitsPerPack}/pack conversion applied]`
+        : '';
       try {
         const { data: srcUpd, error: srcErr } = await supabase
           .from('stock_batches')
@@ -943,17 +990,17 @@ export function WarehouseProvider({ children }) {
         logStockMovement({
           itemId: line.mainStockId, locationId: sourceLocId, batchNo: line.batch, type: 'TRANSFER',
           opening: src.qty, closing: Math.max(0, (src.qty || 0) - qty),
-          reason: `${reasonTag} ${t.transferNumber} accepted (out of ${sourceLabel})`, createdBy: user?.id,
+          reason: `${reasonTag} ${t.transferNumber} accepted (out of ${sourceLabel})${conversionNote}`, createdBy: user?.id,
         });
 
         const { before, after } = await addQtyToBatch({
-          itemId: line.mainStockId, locationId: destLocId, batch: line.batch, qty,
+          itemId: line.mainStockId, locationId: destLocId, batch: line.batch, qty: destQty,
           expiry: line.expiry, mrp: line.mrp, netRate: line.netRate, gst: src.gst, stockist: src.stockist,
         });
         logStockMovement({
           itemId: line.mainStockId, locationId: destLocId, batchNo: line.batch, type: 'TRANSFER',
           opening: before, closing: after,
-          reason: `${reasonTag} ${t.transferNumber} accepted (into ${destLabel})`, createdBy: user?.id,
+          reason: `${reasonTag} ${t.transferNumber} accepted (into ${destLabel})${conversionNote}`, createdBy: user?.id,
         });
       } catch (e) {
         problems.push(`${line.name}: ${e.message || e}`);
@@ -1002,7 +1049,7 @@ export function WarehouseProvider({ children }) {
     const pharmId = pharmacyLocationId();
     if (!pharmId) throw new Error('No pharmacy_counter location is configured.');
 
-    const { lines, error: planErr } = planPharmacyTransferLines(mainStock, order.items);
+    const { lines, error: planErr } = planPharmacyTransferLines(mainStock, order.items, order.transferUnit || 'strips');
     if (planErr) throw new Error(planErr);
 
     return insertPendingTransfer({
@@ -1018,7 +1065,7 @@ export function WarehouseProvider({ children }) {
     if (!pharmId) throw new Error('No pharmacy_counter location is configured.');
     return acceptPendingTransfer(transferId, {
       sourceLocId: mainId, destLocId: pharmId,
-      sourceLabel: 'Main Stock', destLabel: 'Pharmacy', reasonTag: 'Pharmacy transfer',
+      sourceLabel: 'Main Stock', destLabel: 'Pharmacy', reasonTag: 'Pharmacy transfer', sourceIsStrips: true,
     });
   }
 
@@ -1056,7 +1103,7 @@ export function WarehouseProvider({ children }) {
     if (!mainId) throw new Error('No main warehouse location is configured.');
     return acceptPendingTransfer(transferId, {
       sourceLocId: pharmId, destLocId: mainId,
-      sourceLabel: 'Pharmacy Stock', destLabel: 'Main Stock', reasonTag: 'Stock return',
+      sourceLabel: 'Pharmacy Stock', destLabel: 'Main Stock', reasonTag: 'Stock return', sourceIsStrips: false,
     });
   }
 
@@ -1169,6 +1216,8 @@ export function WarehouseProvider({ children }) {
   // render's latest closures, and expose permanently-stable wrappers that
   // delegate through it. `value` is then memoized on real state only, so
   // consumers re-render on data changes — not on every provider render.
+  const permissionsRef = useRef(null);
+  permissionsRef.current = { canWriteWarehouse, canWritePharmacy, pharmacyIds: new Set(pharmacyStock.map((row) => row.id)) };
   const apiRef = useRef(null);
   apiRef.current = {
     adjustStock, receivePurchaseOrder, cancelPurchaseOrder,
@@ -1183,7 +1232,13 @@ export function WarehouseProvider({ children }) {
 
   const api = useMemo(() => {
     const delegate = (name) => (...args) => apiRef.current[name](...args);
-    const guarded = (name) => withErrorAlert(delegate(name));
+    const guarded = (name) => withErrorAlert((...args) => {
+      const pharmacyActions = ['addPharmacyItem', 'updatePharmacyItem', 'deletePharmacyItem'];
+      const pharmacyAction = pharmacyActions.includes(name) || (name === 'adjustStock' && permissionsRef.current.pharmacyIds.has(args[0]));
+      const allowed = pharmacyAction ? permissionsRef.current.canWritePharmacy : permissionsRef.current.canWriteWarehouse;
+      if (!allowed) throw new Error('Your role cannot perform this stock action.');
+      return delegate(name)(...args);
+    });
     return {
       adjustStock: guarded('adjustStock'),
       receivePurchaseOrder: guarded('receivePurchaseOrder'),

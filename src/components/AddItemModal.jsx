@@ -5,6 +5,7 @@ import { Screen, AnimatedPressable } from './UI';
 import { FormField } from './FormField';
 import { useWarehouse } from '../context/WarehouseContext';
 import { useThemedStyles } from '../theme/useThemedStyles';
+import { stripsToUnits, unitsToStrips } from '../lib/units';
 
 const BLANK = { name: '', batch: '', expiry: '', netRate: '', mrp: '', gst: '12', stock: '', unitsPerPack: '10', category: '', hsnCode: '', stockist: '', correctionReason: '' };
 
@@ -53,7 +54,11 @@ export default function AddItemModal({ visible, item, onClose, target = 'main' }
       Alert.alert('Missing name', 'Enter a medicine/product name.');
       return;
     }
-    const stockNum = parseInt(form.stock, 10) || 0;
+    // Pharmacy stock is always whole individual units (unchanged model).
+    // Warehouse (Main Stock) is strip-based and fractional strips are allowed
+    // (e.g. 26.5, entered via Total Stock (Units/Nos)) — stock_batches.qty is
+    // numeric in the DB, so this must not be floored/truncated.
+    const stockNum = target === 'pharmacy' ? (parseInt(form.stock, 10) || 0) : (parseFloat(form.stock) || 0);
     if (stockNum < 0) {
       Alert.alert('Invalid stock', 'Stock quantity cannot be negative.');
       return;
@@ -91,7 +96,7 @@ export default function AddItemModal({ visible, item, onClose, target = 'main' }
     if (item && isSignificantStockChange(item.stock, stockNum)) {
       Alert.alert(
         'Confirm stock correction',
-        `"${item.name}"\n\nStock ${item.stock ?? 0} → ${stockNum} units` +
+        `"${item.name}"\n\nStock ${item.stock ?? 0} → ${stockNum} ${target === 'pharmacy' ? 'units' : 'strips'}` +
           (payload.correctionReason ? `\nReason: ${payload.correctionReason}` : '') +
           '\n\nThis writes directly to the shared warehouse stock. The change is guarded against a concurrent update and recorded in the stock movement history.',
         [
@@ -128,12 +133,44 @@ export default function AddItemModal({ visible, item, onClose, target = 'main' }
           </View>
           <View style={styles.row}>
             <FormField containerStyle={styles.half} label="GST %" keyboardType="numeric" value={String(form.gst)} onChangeText={(v) => patch('gst', v)} />
-            <FormField containerStyle={styles.half} label="Stock (Units)" keyboardType="numeric" value={String(form.stock)} onChangeText={(v) => patch('stock', v)} />
+            <FormField
+              containerStyle={styles.half}
+              label={target === 'pharmacy' ? 'Stock (Units)' : 'Stock (Strips)'}
+              keyboardType={target === 'pharmacy' ? 'numeric' : 'decimal-pad'}
+              value={String(form.stock)}
+              onChangeText={(v) => patch('stock', v)}
+            />
           </View>
           <View style={styles.row}>
-            <FormField containerStyle={styles.half} label="Units Per Pack" keyboardType="numeric" value={String(form.unitsPerPack)} onChangeText={(v) => patch('unitsPerPack', v)} />
+            <FormField
+              containerStyle={styles.half}
+              label={target === 'pharmacy' ? 'Units Per Pack' : 'Units Per Strip'}
+              keyboardType="numeric"
+              value={String(form.unitsPerPack)}
+              onChangeText={(v) => patch('unitsPerPack', v)}
+            />
             <FormField containerStyle={styles.half} label="Stockist / Supplier" value={form.stockist} onChangeText={(v) => patch('stockist', v)} />
           </View>
+          {target !== 'pharmacy' && (
+            <View style={styles.row}>
+              <FormField
+                containerStyle={styles.half}
+                label="Total Stock (Units/Nos)"
+                keyboardType="numeric"
+                value={String(stripsToUnits(form.stock, form.unitsPerPack))}
+                onChangeText={(v) => {
+                  // Bidirectional entry, mirroring the Pharmacy Billing app's own
+                  // "Total Tablet Stock (Units/Nos)" field: typing a unit count
+                  // back-derives Stock (Strips) via Units Per Strip. Fractional
+                  // strips (e.g. 26.5) are allowed and not rounded away — only the
+                  // displayed precision is capped at 1 decimal, matching
+                  // formatStrips() used everywhere else in the transfer flow.
+                  const strips = unitsToStrips(v, form.unitsPerPack);
+                  patch('stock', String(Math.round(strips * 10) / 10));
+                }}
+              />
+            </View>
+          )}
           <View style={styles.row}>
             <FormField containerStyle={styles.half} label="Category" value={form.category} onChangeText={(v) => patch('category', v)} />
             <FormField containerStyle={styles.half} label="HSN Code" value={form.hsnCode} onChangeText={(v) => patch('hsnCode', v)} />

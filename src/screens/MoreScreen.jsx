@@ -6,11 +6,11 @@ import { Screen, Card } from '../components/UI';
 import { HubTile } from '../components/Bits';
 
 export default function MoreScreen({ navigation }) {
-  const { user, isPlatformAdmin, clinicName } = useAuth();
+  const { user, role, isPlatformAdmin, clinicName } = useAuth();
   const { theme } = useTheme();
   const styles = useThemedStyles(makeStyles);
   // Server-verified account type (profiles.is_platform_admin), not the email.
-  const accountType = isPlatformAdmin ? 'Platform Admin' : 'Clinic Admin';
+  const accountType = isPlatformAdmin ? 'Platform Admin' : ({ admin: 'Clinic Admin', pharmacist: 'Pharmacy Staff', warehouse_manager: 'Warehouse Staff', viewer: 'Viewer' }[role] || 'No assigned role');
   return (
     <Screen>
       <ScrollView contentContainerStyle={styles.content}>

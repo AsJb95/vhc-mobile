@@ -9,11 +9,12 @@ import { Card, Screen, ScreenLoading } from '../components/UI';
 import { FormField } from '../components/FormField';
 import { KeyVal, SectionTitle, ChipTabs, AsOf } from '../components/Bits';
 import { formatCurrency, formatDate } from '../lib/format';
+import { validBusinessDate } from '../lib/management';
 import {
   REPORT_PERIODS, periodRange, filterSalesByRange, summarizeSales, compareSummaries, PAYMENT_BUCKETS, paymentBucket,
 } from '../lib/pharmacyReports';
 
-const ISO = /^\d{4}-\d{2}-\d{2}$/;
+
 const BILL_TYPES = ['All', ...PAYMENT_BUCKETS]; // All / Cash / UPI / Card / Credit
 
 // Applies the patient-name and bill-type filters to a set of sales — both are
@@ -32,7 +33,7 @@ function applyReportFilters(sales, patientTerm, billType) {
   return out;
 }
 
-export default function SalesReportsScreen() {
+export default function SalesReportsScreen({ route }) {
   const { recentSales, asOf, loading, refreshing, refresh, fetchSalesRange, loadError } = usePharmacy();
   const { theme } = useTheme();
   const styles = useThemedStyles(makeStyles);
@@ -52,14 +53,14 @@ export default function SalesReportsScreen() {
   // screen mounted, so useState defaults only apply on first ever open.
   useFocusEffect(
     useCallback(() => {
-      setPeriod('today');
-      setCustomDay('');
+      setPeriod(route?.params?.period || 'today');
+      setCustomDay(route?.params?.day || '');
       setCustomFrom('');
       setCustomTo('');
       setRangeResult(null);
       setPatientQuery('');
       setBillType('All');
-    }, []),
+    }, [route?.params?.period, route?.params?.day]),
   );
 
   const oldestCached = useMemo(() => {
@@ -72,8 +73,8 @@ export default function SalesReportsScreen() {
   }, [recentSales]);
 
   const range = useMemo(() => {
-    if (period === 'customday') return ISO.test(customDay) ? periodRange('customday', { day: customDay }) : null;
-    if (period === 'customrange') return (ISO.test(customFrom) && ISO.test(customTo)) ? periodRange('customrange', { from: customFrom, to: customTo }) : null;
+    if (period === 'customday') return validBusinessDate(customDay) ? periodRange('customday', { day: customDay }) : null;
+    if (period === 'customrange') return (validBusinessDate(customFrom) && validBusinessDate(customTo) && customFrom <= customTo) ? periodRange('customrange', { from: customFrom, to: customTo }) : null;
     return periodRange(period);
   }, [period, customDay, customFrom, customTo]);
 
@@ -91,7 +92,7 @@ export default function SalesReportsScreen() {
       if (!cancelled) { setRangeResult(res); setRangeLoading(false); }
     });
     return () => { cancelled = true; };
-  }, [range, needsDirectQuery, fetchSalesRange]);
+  }, [range, needsDirectQuery, fetchSalesRange, asOf]);
 
   const salesForPeriod = useMemo(() => {
     if (!range) return null;
