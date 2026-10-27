@@ -15,6 +15,7 @@ import PendingTransfersScreen from '../screens/PendingTransfersScreen';
 import PatientLookupScreen from '../screens/PatientLookupScreen';
 import CreditScreen from '../screens/CreditScreen';
 import StockScreen from '../screens/StockScreen';
+import ScanBillReviewScreen from '../screens/ScanBillReviewScreen';
 import SubStockScreen from '../screens/SubStockScreen';
 import OrdersScreen from '../screens/OrdersScreen';
 import PendingReturnsScreen from '../screens/PendingReturnsScreen';
@@ -75,6 +76,7 @@ function WarehouseStack() {
       <Stack.Screen name="Sub-Stock Locations" component={SubStockScreen} />
       <Stack.Screen name="Orders" component={OrdersScreen} />
       <Stack.Screen name="Pending Returns" component={PendingReturnsScreen} />
+      <Stack.Screen name="Scan Bill Review" component={ScanBillReviewScreen} options={{ title: 'Review Scanned Bill' }} />
     </Stack.Navigator>
   );
 }

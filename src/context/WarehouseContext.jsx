@@ -24,6 +24,16 @@ async function ensureTransferAuditColsChecked() {
   }
 }
 
+// Production Safety Gate for Atomic Transfer RPC
+// Default to false: Existing REST workflow continues uninterrupted in production.
+// Set to true only after 20261020000100_atomic_stock_transfers.sql is applied to Supabase.
+const ATOMIC_TRANSFER_RPC_ENABLED = false;
+
+// Production Safety Gate for Atomic Purchase Bill Import RPC
+// Default to false: Existing REST purchase workflow continues uninterrupted.
+// Set to true only after 20261020000200_atomic_purchase_bill_import.sql is applied.
+const ATOMIC_BILL_IMPORT_RPC_ENABLED = false;
+
 function withErrorAlert(fn) {
   return async (...args) => {
     try {
@@ -700,6 +710,199 @@ export function WarehouseProvider({ children }) {
   }
 
   // ---- Purchase orders ----
+  async function importPurchaseBill({ header, items, useRpc = false }) {
+    if (!header?.supplierName || !header?.invoiceNumber) {
+      throw new Error('Supplier name and invoice number are required.');
+    }
+    if (!items || items.length === 0) {
+      throw new Error('No items to import in this bill.');
+    }
+
+    const supplier = header.supplierName.trim();
+    const invoiceNumber = header.invoiceNumber.trim();
+    const invoiceDate = header.invoiceDate || new Date().toISOString().split('T')[0];
+
+    // Check for duplicate invoice
+    const { data: existingPO, error: poCheckErr } = await supabase
+      .from('purchase_orders')
+      .select('id, po_number, status')
+      .ilike('po_number', invoiceNumber)
+      .ilike('supplier', supplier)
+      .eq('status', 'Received')
+      .limit(1)
+      .maybeSingle();
+
+    if (poCheckErr) throw poCheckErr;
+    if (existingPO) {
+      throw new Error(`Invoice "${invoiceNumber}" from "${supplier}" has already been imported.`);
+    }
+
+    const shouldUseRpc = ATOMIC_BILL_IMPORT_RPC_ENABLED || useRpc;
+
+    if (shouldUseRpc) {
+      const payload = {
+        supplier,
+        invoice_number: invoiceNumber,
+        invoice_date: invoiceDate,
+        notes: 'Imported via VHC Mobile Bill Scanner',
+        items: items.map((i) => ({
+          name: i.name,
+          batch: i.batch,
+          expiry: i.expiry,
+          qty: i.qty,
+          free_qty: i.freeQty || 0,
+          units_per_pack: i.unitsPerPack || 10,
+          mrp: i.mrp || 0,
+          net_rate: i.ptr || 0,
+          gst: i.gst || 12,
+        })),
+      };
+      const { data, error } = await supabase.rpc('atomic_import_purchase_bill', { p_payload: payload });
+      if (error) throw error;
+      await fetchAll();
+      return {
+        ok: data?.ok ?? true,
+        purchaseOrderId: data?.purchase_order_id,
+        invoiceNumber: data?.invoice_number || invoiceNumber,
+        supplier: data?.supplier || supplier,
+        itemsCount: data?.items_count ?? items.length,
+        totalStripsAdded: data?.total_strips_added ?? 0,
+        grandTotal: data?.grand_total ?? 0,
+        ...data,
+      };
+    }
+
+    // Client-side sequential import with safety verification
+    const mainId = mainLocationId();
+    if (!mainId) throw new Error('Warehouse Main location is not configured.');
+
+    let subtotal = 0;
+    let gstTotal = 0;
+    let grandTotal = 0;
+    let totalStripsAdded = 0;
+
+    for (const line of items) {
+      const billedQty = Math.max(0, Number(line.qty) || 0);
+      const freeQty = Math.max(0, Number(line.freeQty) || 0);
+      const totalItemStrips = billedQty + freeQty;
+      const ptr = Math.max(0, Number(line.ptr) || 0);
+      const gst = Math.max(0, Number(line.gst) || 12);
+      const taxable = billedQty * ptr;
+      const gstAmt = taxable * (gst / 100);
+
+      subtotal += taxable;
+      gstTotal += gstAmt;
+      grandTotal += (taxable + gstAmt);
+      totalStripsAdded += totalItemStrips;
+    }
+
+    // 1. Create Purchase Order header
+    const { data: po, error: poErr } = await supabase
+      .from('purchase_orders')
+      .insert({
+        po_number: invoiceNumber,
+        supplier,
+        status: 'Received',
+        po_date: invoiceDate,
+        received_at: new Date().toISOString(),
+        subtotal: Math.round(subtotal * 100) / 100,
+        gst_total: Math.round(gstTotal * 100) / 100,
+        total_amount: Math.round(grandTotal * 100) / 100,
+        notes: 'Imported via VHC Mobile Bill Scanner',
+      })
+      .select('id')
+      .single();
+
+    if (poErr) throw poErr;
+
+    // 2. Process each item
+    for (const line of items) {
+      const trimmed = (line.name || '').trim();
+      if (!trimmed) continue;
+
+      const itemId = await resolveItemId({
+        name: trimmed,
+        category: 'Medicines',
+        unitsPerPack: line.unitsPerPack || 10,
+      });
+
+      const billedQty = Math.max(0, Number(line.qty) || 0);
+      const freeQty = Math.max(0, Number(line.freeQty) || 0);
+      const totalItemStrips = billedQty + freeQty;
+      const batchNo = line.batch ? line.batch.trim() : null;
+      const expiry = line.expiry ? line.expiry.trim() : null;
+      const mrp = Math.max(0, Number(line.mrp) || 0);
+      const ptr = Math.max(0, Number(line.ptr) || 0);
+      const gst = Math.max(0, Number(line.gst) || 12);
+
+      // Record PO item line
+      await supabase.from('purchase_order_items').insert({
+        purchase_order_id: po.id,
+        item_id: itemId,
+        name: trimmed,
+        batch_no: batchNo,
+        expiry_date: expiry,
+        qty: totalItemStrips,
+        mrp,
+        net_rate: ptr,
+        gst,
+        units_per_pack: line.unitsPerPack || 10,
+      }).catch(() => {});
+
+      // Lookup or create batch
+      const { data: existingBatch, error: bErr } = await batchEq(
+        supabase.from('stock_batches').select('id, qty').eq('item_id', itemId).eq('location_id', mainId),
+        batchNo
+      ).maybeSingle();
+
+      if (bErr) throw bErr;
+
+      let opening = 0;
+      let closing = totalItemStrips;
+
+      if (existingBatch) {
+        opening = existingBatch.qty || 0;
+        closing = opening + totalItemStrips;
+        await bumpBatchQty(existingBatch.id, totalItemStrips);
+      } else {
+        const { error: insErr } = await supabase.from('stock_batches').insert({
+          item_id: itemId,
+          location_id: mainId,
+          batch_no: batchNo,
+          expiry_date: expiry,
+          net_rate: ptr,
+          mrp,
+          gst,
+          stockist: supplier,
+          qty: totalItemStrips,
+        });
+        if (insErr) throw insErr;
+      }
+
+      logStockMovement({
+        itemId,
+        locationId: mainId,
+        batchNo,
+        type: 'PURCHASE',
+        opening,
+        closing,
+        reason: `Bill Import: ${invoiceNumber} (${supplier})`,
+      });
+    }
+
+    await fetchAll();
+    return {
+      ok: true,
+      purchaseOrderId: po.id,
+      invoiceNumber,
+      supplier,
+      itemsCount: items.length,
+      totalStripsAdded,
+      total_strips_added: totalStripsAdded,
+      grandTotal: Math.round(grandTotal * 100) / 100,
+    };
+  }
+
   async function generatePoNumber() {
     const year = new Date().getFullYear();
     const { count } = await supabase.from('purchase_orders').select('id', { count: 'exact', head: true });
@@ -1039,6 +1242,47 @@ export function WarehouseProvider({ children }) {
     return { ok: true };
   }
 
+  async function acceptAtomicTransfer(transferId) {
+    const t = transferOrders.find((x) => x.id === transferId);
+    if (t && t.status !== 'Pending') {
+      throw new Error(`This request is already "${t.status}".`);
+    }
+
+    const { data, error } = await supabase.rpc('accept_stock_transfer', {
+      p_transfer_id: transferId,
+    });
+
+    if (error) {
+      await fetchAll().catch(() => {});
+      throw new Error(error.message || 'Failed to accept stock transfer.');
+    }
+
+    markTransferStatusLocally(transferId, 'Completed');
+    await fetchAll();
+    return { ok: true, transferNumber: data?.transfer_number || t?.transferNumber };
+  }
+
+  async function rejectAtomicTransfer(transferId, reason = null) {
+    const t = transferOrders.find((x) => x.id === transferId);
+    if (t && t.status !== 'Pending') {
+      throw new Error(`This request is already "${t.status}".`);
+    }
+
+    const { data, error } = await supabase.rpc('reject_stock_transfer', {
+      p_transfer_id: transferId,
+      p_reason: reason || null,
+    });
+
+    if (error) {
+      await fetchAll().catch(() => {});
+      throw new Error(error.message || 'Failed to reject stock transfer.');
+    }
+
+    markTransferStatusLocally(transferId, 'Rejected');
+    await fetchAll();
+    return { ok: true, transferNumber: data?.transfer_number || t?.transferNumber };
+  }
+
   // ---- Warehouse -> Pharmacy transfer (behaviour unchanged) ----
 
   // Create a Pending request. Changes NO stock. The Main Stock snapshot is only
@@ -1060,6 +1304,9 @@ export function WarehouseProvider({ children }) {
 
   // Accept: deduct Main Stock, add Pharmacy Inventory, mark Completed.
   async function approvePharmacyTransfer(transferId) {
+    if (ATOMIC_TRANSFER_RPC_ENABLED) {
+      return acceptAtomicTransfer(transferId);
+    }
     const mainId = mainLocationId();
     const pharmId = pharmacyLocationId();
     if (!pharmId) throw new Error('No pharmacy_counter location is configured.');
@@ -1070,7 +1317,10 @@ export function WarehouseProvider({ children }) {
   }
 
   // Reject: mark Rejected, no stock change.
-  async function cancelPharmacyTransfer(transferId) {
+  async function cancelPharmacyTransfer(transferId, reason) {
+    if (ATOMIC_TRANSFER_RPC_ENABLED) {
+      return rejectAtomicTransfer(transferId, reason);
+    }
     return claimTransferRejected(transferId);
   }
 
@@ -1098,6 +1348,9 @@ export function WarehouseProvider({ children }) {
   }
 
   async function approveStockReturn(transferId) {
+    if (ATOMIC_TRANSFER_RPC_ENABLED) {
+      return acceptAtomicTransfer(transferId);
+    }
     const mainId = mainLocationId();
     const pharmId = pharmacyLocationId();
     if (!mainId) throw new Error('No main warehouse location is configured.');
@@ -1107,7 +1360,10 @@ export function WarehouseProvider({ children }) {
     });
   }
 
-  async function rejectStockReturn(transferId) {
+  async function rejectStockReturn(transferId, reason) {
+    if (ATOMIC_TRANSFER_RPC_ENABLED) {
+      return rejectAtomicTransfer(transferId, reason);
+    }
     return claimTransferRejected(transferId);
   }
 
@@ -1221,21 +1477,28 @@ export function WarehouseProvider({ children }) {
   const apiRef = useRef(null);
   apiRef.current = {
     adjustStock, receivePurchaseOrder, cancelPurchaseOrder,
+    importPurchaseBill,
     addMainItem, updateMainItem, deleteMainItem,
     addPharmacyItem, updatePharmacyItem, deletePharmacyItem,
     createPurchaseOrder, createTransferOrder,
     createPharmacyTransferRequest, approvePharmacyTransfer, cancelPharmacyTransfer,
     createStockReturnRequest, approveStockReturn, rejectStockReturn,
     approveTransfer, rejectTransfer,
+    acceptAtomicTransfer, rejectAtomicTransfer,
     getAlerts, getTotalValue, getSubStockValue, getPharmacyAlerts,
   };
 
   const api = useMemo(() => {
     const delegate = (name) => (...args) => apiRef.current[name](...args);
     const guarded = (name) => withErrorAlert((...args) => {
-      const pharmacyActions = ['addPharmacyItem', 'updatePharmacyItem', 'deletePharmacyItem'];
-      const pharmacyAction = pharmacyActions.includes(name) || (name === 'adjustStock' && permissionsRef.current.pharmacyIds.has(args[0]));
-      const allowed = pharmacyAction ? permissionsRef.current.canWritePharmacy : permissionsRef.current.canWriteWarehouse;
+      const pharmacyOnlyActions = ['addPharmacyItem', 'updatePharmacyItem', 'deletePharmacyItem', 'createStockReturnRequest'];
+      const sharedTransferActions = ['approvePharmacyTransfer', 'cancelPharmacyTransfer', 'acceptAtomicTransfer', 'rejectAtomicTransfer'];
+      const isPharmacyAction = pharmacyOnlyActions.includes(name) || (name === 'adjustStock' && permissionsRef.current.pharmacyIds.has(args[0]));
+      const allowed = isPharmacyAction
+        ? permissionsRef.current.canWritePharmacy
+        : sharedTransferActions.includes(name)
+          ? (permissionsRef.current.canWritePharmacy || permissionsRef.current.canWriteWarehouse)
+          : permissionsRef.current.canWriteWarehouse;
       if (!allowed) throw new Error('Your role cannot perform this stock action.');
       return delegate(name)(...args);
     });
@@ -1243,6 +1506,8 @@ export function WarehouseProvider({ children }) {
       adjustStock: guarded('adjustStock'),
       receivePurchaseOrder: guarded('receivePurchaseOrder'),
       cancelPurchaseOrder: guarded('cancelPurchaseOrder'),
+      importPurchaseBill: guarded('importPurchaseBill'),
+      atomicBillImportRpcEnabled: ATOMIC_BILL_IMPORT_RPC_ENABLED,
       addMainItem: guarded('addMainItem'),
       updateMainItem: guarded('updateMainItem'),
       deleteMainItem: guarded('deleteMainItem'),
@@ -1259,6 +1524,9 @@ export function WarehouseProvider({ children }) {
       rejectStockReturn: guarded('rejectStockReturn'),
       approveTransfer: guarded('approveTransfer'),
       rejectTransfer: guarded('rejectTransfer'),
+      acceptAtomicTransfer: guarded('acceptAtomicTransfer'),
+      rejectAtomicTransfer: guarded('rejectAtomicTransfer'),
+      atomicTransferRpcEnabled: ATOMIC_TRANSFER_RPC_ENABLED,
       getAlerts: delegate('getAlerts'),
       getTotalValue: delegate('getTotalValue'),
       getSubStockValue: delegate('getSubStockValue'),

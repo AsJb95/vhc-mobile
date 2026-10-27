@@ -2,6 +2,27 @@
 
 All notable VHC Mobile releases are recorded here.
 
+## 1.4.5 — 2026-10-20
+
+- **Appearance & 6-Theme Expansion**:
+  - Upgraded Settings > Appearance with 6 selectable themes: System Default, Modern Dark, Modern Light, Midnight AMOLED (pure `#000000`), Classic Light, and High Contrast (WCAG AAA).
+  - Added live Theme Preview cards with category pills, color palette swatches, and instant dynamic switching.
+  - Full semantic token contract parity across all palettes with persistent offline storage in `AsyncStorage`.
+- **Printed Medicine Bill Scanner & OCR Engine**:
+  - Added `[ Scan Bill ]` action to Warehouse Main Stock beside `[ New Entry ]`.
+  - Added Camera capture and Photo Gallery selector via `expo-image-picker` with permission handling.
+  - Multi-row invoice parsing service (`billOcrService.js`) extracting Distributor, Inv No, Date, Medicine Name, Batch, Expiry, Qty, Free scheme, UPP, MRP, PTR, and GST.
+  - Intelligent medicine matching engine (`medicineMatcher.js`) with exact normalization, root token extraction, and fuzzy similarity scoring against VHC inventory.
+  - Complete Scanned Bill Review Screen (`ScanBillReviewScreen.jsx`) with color-coded badges (Green verified, Amber review, Red incomplete), inline row editing, item removal, and manual additions.
+  - Stock quantity converter (`stockConverter.js`) maintaining fractional strips, free scheme addition to warehouse strips, and unit conversions.
+  - Prepared atomic transaction import SQL migration (`20261020000200_atomic_purchase_bill_import.sql`) with advisory locking and duplicate invoice protection.
+  - Guarded by `ATOMIC_BILL_IMPORT_RPC_ENABLED = false` for safe sequential fallback.
+- **Atomic Transfer Safety & Permissions**:
+  - Prepared atomic database migration for stock transfers (`20261020000100_atomic_stock_transfers.sql`).
+  - Fixed Pharmacist role permission checks on Pending Transfers and Stock Returns.
+  - Added release keystore property fallback in Android build configuration.
+  - 15 Jest test suites / 150 automated tests passing with 0 ESLint warnings.
+
 ## 1.4.4 — 2026-09-22
 
 - Added the unified VHC management dashboard.

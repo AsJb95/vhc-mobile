@@ -25,6 +25,16 @@
         "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_7fL9ZcI18hC1XiMqeCLhlg_YXNzABAC"
       }
     },
+    "staging": {
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_SUPABASE_URL": "https://dvscemgqegmfmgrtytal.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_UUtnPG57OSUwhiQWBAOkqA_2S655yMF"
+      }
+    },
     "production": {
       "autoIncrement": true,
       "env": {

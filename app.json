@@ -2,10 +2,10 @@
   "expo": {
     "name": "VHC Mobile",
     "slug": "vhc-mobile",
-    "version": "1.4.4",
+    "version": "1.4.5",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "dark",
+    "userInterfaceStyle": "automatic",
     "backgroundColor": "#0a0f1e",
     "ios": {
       "supportsTablet": true,
@@ -19,7 +19,7 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "versionCode": 19
+      "versionCode": 20
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -31,7 +31,14 @@
     },
     "owner": "arun.s",
     "plugins": [
-      "expo-font"
+      "expo-font",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "VHC Mobile needs access to your gallery to select printed medicine invoices.",
+          "cameraPermission": "VHC Mobile needs camera access to scan printed medicine invoices."
+        }
+      ]
     ]
   }
 }

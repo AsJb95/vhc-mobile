@@ -7,15 +7,10 @@ import { useTheme } from '../context/ThemeContext';
 import { useThemedStyles } from '../theme/useThemedStyles';
 import { Card, AnimatedPressable, Screen } from '../components/UI';
 
-const THEME_OPTIONS = [
-  { key: 'light', label: 'Light', icon: 'sunny-outline' },
-  { key: 'dark', label: 'Dark', icon: 'moon-outline' },
-];
-
 export default function SettingsScreen() {
   const { user, role, isPlatformAdmin, clinicName, signOut } = useAuth();
   const { settings, locations } = useWarehouse();
-  const { theme, scheme, setScheme } = useTheme();
+  const { theme, scheme, setScheme, themeList } = useTheme();
   const styles = useThemedStyles(makeStyles);
 
   // Server-verified account type (profiles.is_platform_admin) — never email,
@@ -43,29 +38,83 @@ export default function SettingsScreen() {
         </Card>
 
         <Card index={1} style={styles.card}>
-          <Text style={styles.sectionTitle}>Theme</Text>
-          <Text style={styles.row}>Choose how VHC looks on this device.</Text>
-          <View style={styles.segmented}>
-            {THEME_OPTIONS.map((opt) => {
+          <View style={styles.themeHeaderRow}>
+            <Text style={styles.sectionTitle}>Appearance & Themes</Text>
+            <View style={styles.currentThemeBadge}>
+              <Text style={styles.currentThemeBadgeText}>
+                {themeList.find((t) => t.key === scheme)?.name || 'Custom'}
+              </Text>
+            </View>
+          </View>
+          <Text style={styles.row}>Select a visual style tailored to your environment.</Text>
+
+          <View style={styles.themeGrid}>
+            {themeList.map((opt) => {
               const active = scheme === opt.key;
               return (
                 <AnimatedPressable
                   key={opt.key}
-                  style={[styles.seg, active && styles.segActive]}
+                  style={[
+                    styles.themeCard,
+                    active && styles.themeCardActive,
+                  ]}
                   onPress={() => setScheme(opt.key)}
                 >
-                  <Ionicons
-                    name={opt.icon}
-                    size={16}
-                    color={active ? theme.onAccent : theme.muted}
-                    style={{ marginRight: 6 }}
-                  />
-                  <Text style={[styles.segText, active && styles.segTextActive]}>{opt.label}</Text>
+                  <View style={styles.themeCardTop}>
+                    <View style={styles.themeCardHeader}>
+                      <View style={[styles.iconCircle, active && styles.iconCircleActive]}>
+                        <Ionicons
+                          name={opt.icon}
+                          size={18}
+                          color={active ? theme.onAccent : theme.accent}
+                        />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <View style={styles.themeNameRow}>
+                          <Text style={[styles.themeCardTitle, active && styles.themeCardTitleActive]}>
+                            {opt.name}
+                          </Text>
+                          <View style={styles.categoryPill}>
+                            <Text style={styles.categoryPillText}>{opt.category}</Text>
+                          </View>
+                        </View>
+                        <Text style={styles.themeCardDesc} numberOfLines={2}>
+                          {opt.description}
+                        </Text>
+                      </View>
+                    </View>
+
+                    <View style={[styles.checkCircle, active && styles.checkCircleActive]}>
+                      {active ? (
+                        <Ionicons name="checkmark" size={14} color={theme.onAccent} />
+                      ) : null}
+                    </View>
+                  </View>
+
+                  <View style={styles.paletteRow}>
+                    <Text style={styles.paletteLabel}>Palette:</Text>
+                    <View style={styles.swatchGroup}>
+                      {opt.previewColors.map((hex, i) => (
+                        <View
+                          key={i}
+                          style={[
+                            styles.swatchCircle,
+                            { backgroundColor: hex },
+                            i === 0 && { borderWidth: 1, borderColor: '#ffffff22' },
+                          ]}
+                        />
+                      ))}
+                    </View>
+                  </View>
                 </AnimatedPressable>
               );
             })}
           </View>
-          <Text style={styles.hint}>Your choice is saved and restored the next time you open the app.</Text>
+          <Text style={styles.hint}>
+            {scheme === 'system'
+              ? 'Currently adapting to your Android system appearance.'
+              : 'Theme preference is saved offline and persists across restarts.'}
+          </Text>
         </Card>
 
         <Card index={2} style={styles.card}>
@@ -94,18 +143,85 @@ const makeStyles = (t) => StyleSheet.create({
   content: { padding: 16, paddingBottom: 32 },
   title: { color: t.text, fontSize: 26, fontWeight: '800', letterSpacing: -0.4, marginBottom: 16 },
   card: { marginBottom: 12 },
-  sectionTitle: { color: t.text, fontWeight: '600', fontSize: 14, marginBottom: 8 },
-  row: { color: t.muted, fontSize: 13, marginBottom: 4 },
-  roleBadge: { color: t.accent, fontWeight: '600', marginTop: 4 },
-  hint: { color: t.muted, fontSize: 11, marginTop: 8, fontStyle: 'italic' },
-  segmented: {
-    flexDirection: 'row', backgroundColor: t.chip, borderRadius: 12,
-    borderWidth: 1, borderColor: t.panelBorder, padding: 4, marginTop: 10,
+  sectionTitle: { color: t.text, fontWeight: '700', fontSize: 15, marginBottom: 4 },
+  themeHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
+  currentThemeBadge: {
+    backgroundColor: `${t.accent}22`,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: `${t.accent}44`,
   },
-  seg: { flex: 1, flexDirection: 'row', paddingVertical: 9, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
-  segActive: { backgroundColor: t.accent },
-  segText: { color: t.muted, fontSize: 13, fontWeight: '600' },
-  segTextActive: { color: t.onAccent, fontWeight: '700' },
+  currentThemeBadgeText: { color: t.accent, fontSize: 11, fontWeight: '700' },
+  row: { color: t.muted, fontSize: 13, marginBottom: 8 },
+  roleBadge: { color: t.accent, fontWeight: '600', marginTop: 4 },
+  hint: { color: t.muted, fontSize: 11, marginTop: 10, fontStyle: 'italic' },
+
+  themeGrid: { marginTop: 6, gap: 8 },
+  themeCard: {
+    backgroundColor: t.chip,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: t.panelBorder,
+    padding: 12,
+  },
+  themeCardActive: {
+    borderColor: t.accent,
+    backgroundColor: `${t.accent}14`,
+  },
+  themeCardTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  themeCardHeader: { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 },
+  iconCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: `${t.accent}18`,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  iconCircleActive: {
+    backgroundColor: t.accent,
+  },
+  themeNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  themeCardTitle: { color: t.text, fontSize: 14, fontWeight: '700' },
+  themeCardTitleActive: { color: t.accent },
+  categoryPill: {
+    backgroundColor: `${t.muted}1a`,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  categoryPillText: { color: t.muted, fontSize: 10, fontWeight: '600' },
+  themeCardDesc: { color: t.muted, fontSize: 11, marginTop: 2 },
+  checkCircle: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 1.5,
+    borderColor: t.panelBorder,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 8,
+  },
+  checkCircleActive: {
+    backgroundColor: t.accent,
+    borderColor: t.accent,
+  },
+
+  paletteRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 10,
+    paddingTop: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: `${t.panelBorder}88`,
+  },
+  paletteLabel: { color: t.muted, fontSize: 10, fontWeight: '600' },
+  swatchGroup: { flexDirection: 'row', gap: 6 },
+  swatchCircle: { width: 14, height: 14, borderRadius: 7 },
+
   signOutBtn: { marginTop: 8, backgroundColor: t.danger, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
   signOutText: { color: t.onAccent, fontWeight: '700' },
 });

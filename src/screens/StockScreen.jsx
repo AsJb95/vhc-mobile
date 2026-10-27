@@ -10,6 +10,7 @@ import { Card, Badge, EmptyState, ScreenLoading, StatCard, AnimatedPressable, Sc
 import { SectionTitle, AlphabetFilter } from '../components/Bits';
 import AddItemModal from '../components/AddItemModal';
 import MoveStockModal from '../components/MoveStockModal';
+import ScanBillBottomSheet from '../components/ScanBillBottomSheet';
 import { formatCurrency, expiryStatus, stockStatus, computeStockValue } from '../lib/format';
 import { stripsToUnits } from '../lib/units';
 
@@ -102,14 +103,20 @@ export default function StockScreen({ route, navigation }) {
 
   const [letter, setLetter] = useState('All');
   const [modalOpen, setModalOpen] = useState(false);
+  const [scanModalOpen, setScanModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
   const [movingItem, setMovingItem] = useState(null);
   const [pendingIds, setPendingIds] = useState(() => new Set());
   const inFlightRef = useRef(new Set());
 
   const openAdd = useCallback(() => { setEditingItem(null); setModalOpen(true); }, []);
+  const openScan = useCallback(() => setScanModalOpen(true), []);
   const openEdit = useCallback((item) => { setEditingItem(item); setModalOpen(true); }, []);
   const openMove = useCallback((item) => setMovingItem(item), []);
+
+  const handleScanComplete = useCallback(({ header, items, imageUri, rawText }) => {
+    navigation?.navigate?.('Scan Bill Review', { header, items, imageUri, rawText });
+  }, [navigation]);
 
   const onAdjust = useCallback(async (id, delta) => {
     if (inFlightRef.current.has(id)) return; // block rapid double-tap re-fire
@@ -233,14 +240,24 @@ export default function StockScreen({ route, navigation }) {
             <Text style={styles.subtitle}>{mainStock.length} products</Text>
           </View>
           {canWriteWarehouse && (
-            <AnimatedPressable
-              style={styles.newEntryBtn}
-              onPress={openAdd}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            >
-              <Ionicons name="add-circle" size={18} color={theme.onAccent} />
-              <Text style={styles.newEntryBtnText}>New Entry</Text>
-            </AnimatedPressable>
+            <View style={styles.headerActions}>
+              <AnimatedPressable
+                style={styles.scanEntryBtn}
+                onPress={openScan}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <Ionicons name="scan-outline" size={17} color={theme.accent} />
+                <Text style={styles.scanEntryBtnText}>Scan Bill</Text>
+              </AnimatedPressable>
+              <AnimatedPressable
+                style={styles.newEntryBtn}
+                onPress={openAdd}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <Ionicons name="add-circle" size={18} color={theme.onAccent} />
+                <Text style={styles.newEntryBtnText}>New Entry</Text>
+              </AnimatedPressable>
+            </View>
           )}
         </View>
         {stockTruncated ? (
@@ -289,6 +306,12 @@ export default function StockScreen({ route, navigation }) {
 
       <AddItemModal visible={modalOpen} item={editingItem} onClose={() => setModalOpen(false)} />
       <MoveStockModal visible={!!movingItem} item={movingItem} onClose={() => setMovingItem(null)} />
+      <ScanBillBottomSheet
+        visible={scanModalOpen}
+        catalog={mainStock}
+        onClose={() => setScanModalOpen(false)}
+        onScanComplete={handleScanComplete}
+      />
     </Screen>
   );
 }
@@ -308,6 +331,13 @@ const makeStyles = (t) => StyleSheet.create({
   headerTop: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
   title: { color: t.text, fontSize: 26, fontWeight: '800', letterSpacing: -0.4 },
   subtitle: { color: t.muted, fontSize: 12, marginBottom: 12 },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  scanEntryBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    height: 40, paddingHorizontal: 12, borderRadius: 12,
+    backgroundColor: t.chip, borderWidth: 1, borderColor: `${t.accent}66`,
+  },
+  scanEntryBtnText: { color: t.accent, fontWeight: '700', fontSize: 13 },
   newEntryBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 6,
     height: 40, paddingHorizontal: 14, borderRadius: 12,

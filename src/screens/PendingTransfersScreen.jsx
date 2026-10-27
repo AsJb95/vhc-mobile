@@ -16,7 +16,8 @@ export default function PendingTransfersScreen() {
     pendingPharmacyTransfers, approvePharmacyTransfer, cancelPharmacyTransfer,
     loading, refreshing, refresh,
   } = useWarehouse();
-  const { canWriteWarehouse } = useAuth();
+  const { canWriteWarehouse, canWritePharmacy } = useAuth();
+  const canAct = canWriteWarehouse || canWritePharmacy;
   const { theme } = useTheme();
   const styles = useThemedStyles(makeStyles);
   const [busyId, setBusyId] = useState(null);
@@ -92,7 +93,7 @@ export default function PendingTransfersScreen() {
             ? `${pendingPharmacyTransfers.length} awaiting your decision · Pharmacy Inventory changes only when you Accept`
             : 'Nothing pending'}
         </Text>
-        {canWriteWarehouse && pendingPharmacyTransfers.length > 1 ? (
+        {canAct && pendingPharmacyTransfers.length > 1 ? (
           <AnimatedPressable style={styles.acceptAllBtn} onPress={acceptAll} disabled={!!busyId}>
             <Text style={styles.acceptAllText}>Accept All ({pendingPharmacyTransfers.length})</Text>
           </AnimatedPressable>
@@ -132,7 +133,7 @@ export default function PendingTransfersScreen() {
                 ))}
               </View>
 
-              {canWriteWarehouse ? (
+              {canAct ? (
                 <View style={styles.actions}>
                   <AnimatedPressable style={[styles.rejectBtn, busy && styles.btnDisabled]} onPress={() => confirmReject(t)} disabled={busy}>
                     <Text style={styles.rejectBtnText}>Reject</Text>
@@ -142,7 +143,7 @@ export default function PendingTransfersScreen() {
                   </AnimatedPressable>
                 </View>
               ) : (
-                <Text style={styles.readOnlyNote}>Accepting or rejecting a request needs warehouse write access.</Text>
+                <Text style={styles.readOnlyNote}>Accepting or rejecting a request needs pharmacy or warehouse write access.</Text>
               )}
             </Card>
           );
